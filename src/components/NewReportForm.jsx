@@ -245,7 +245,6 @@ export default function NewReportForm({ onSubmitted }) {
         files={workPhotos}
         setFiles={setWorkPhotos}
         accept="image/*"
-        capture="environment"
         label="Add work photo"
         icon={Camera}
         kind="photo"
