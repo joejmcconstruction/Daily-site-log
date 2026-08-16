@@ -139,47 +139,37 @@ alter table public.reports add column if not exists labour_hours numeric;
 
 alter table public.machine_hours add column if not exists report_id uuid references public.reports(id) on delete cascade;
 
--- ---------- Cost rates (hourly cost per machine + a labour rate) ----------
-create table public.cost_rates (
-  id uuid primary key default gen_random_uuid(),
-  updated_at timestamptz not null default now(),
-  rate_type text not null check (rate_type in ('machine', 'labour')),
-  name text not null,
-  hourly_rate numeric not null default 0,
-  unique (rate_type, name)
-);
+-- ---------- Private export file (manager-only Excel workbook) ----------
+-- The app automatically regenerates a single .xlsx workbook after every report
+-- is submitted or deleted, and overwrites this one file with it. The bucket is
+-- NOT public, and there is no link to it anywhere in the app — download it from
+-- the Supabase Dashboard: Storage > reports-export > site-daily-report.xlsx.
+-- Note: cost rates are entered directly in that workbook's "Rates" sheet, not
+-- in the app, so real cost figures never touch the database or crew-visible UI.
 
-alter table public.cost_rates enable row level security;
+insert into storage.buckets (id, name, public)
+values ('reports-export', 'reports-export', false)
+on conflict (id) do nothing;
 
-create policy "Authenticated users can view cost rates"
-on public.cost_rates for select
-to authenticated
-using (true);
+drop policy if exists "authenticated users can read export files" on storage.objects;
+create policy "authenticated users can read export files"
+  on storage.objects for select
+  to authenticated
+  using (bucket_id = 'reports-export');
 
-create policy "Authenticated users can insert cost rates"
-on public.cost_rates for insert
-to authenticated
-with check (true);
+drop policy if exists "authenticated users can write export files" on storage.objects;
+create policy "authenticated users can write export files"
+  on storage.objects for insert
+  to authenticated
+  with check (bucket_id = 'reports-export');
 
-create policy "Authenticated users can update cost rates"
-on public.cost_rates for update
-to authenticated
-using (true)
-with check (true);
+drop policy if exists "authenticated users can update export files" on storage.objects;
+create policy "authenticated users can update export files"
+  on storage.objects for update
+  to authenticated
+  using (bucket_id = 'reports-export')
+  with check (bucket_id = 'reports-export');
 
--- Seed a rate row per machine, plus one for labour. All start at 0 —
--- set the real hourly costs on the Costs tab in the app.
-insert into public.cost_rates (rate_type, name, hourly_rate)
-values
-  ('machine', '13T Hitachi', 0),
-  ('machine', 'Kubota', 0),
-  ('machine', 'Hitachi 225', 0),
-  ('machine', 'Kobelco 140', 0),
-  ('machine', 'Wacker Neuson Excavator', 0),
-  ('machine', 'Yanmar 0.8T', 0),
-  ('machine', 'Bobcat 1T', 0),
-  ('machine', '10T Thwaites Dumper', 0),
-  ('machine', '6T Thwaites Dumper', 0),
-  ('machine', 'Wacker Plate', 0),
-  ('labour', 'Labour', 0)
-on conflict (rate_type, name) do nothing;
+-- Optional cleanup: if you already ran an earlier version of this file that
+-- created a cost_rates table, it's no longer used and safe to drop:
+-- drop table if exists public.cost_rates;

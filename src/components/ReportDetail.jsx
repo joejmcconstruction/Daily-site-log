@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { ArrowLeft, Cloud, Sun, CloudDrizzle, CloudRain, Trash2, FileText, Loader2, Wrench } from "lucide-react";
 import { supabase } from "../supabaseClient";
 import { prettyDate, shortTime, fileSizeLabel, DUCT_FIELDS } from "../lib/helpers";
+import { syncExcelExport } from "../lib/exportExcel";
 
 const WEATHER_ICONS = { Sunny: Sun, Overcast: Cloud, "Light rain": CloudDrizzle, "Heavy rain": CloudRain, Showers: CloudRain };
 
@@ -43,6 +44,11 @@ export default function ReportDetail({ reportId, onBack, onDeleted }) {
       await supabase.storage.from("site-reports").remove(paths);
     }
     await supabase.from("reports").delete().eq("id", reportId);
+    try {
+      await syncExcelExport();
+    } catch (exportErr) {
+      console.error("Excel export sync failed:", exportErr);
+    }
     setDeleting(false);
     onDeleted?.();
   }

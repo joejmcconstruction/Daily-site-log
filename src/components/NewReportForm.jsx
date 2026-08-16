@@ -2,6 +2,7 @@ import React, { useState, useRef } from "react";
 import { Check, AlertCircle, Loader2, Camera, Paperclip, Plus, X } from "lucide-react";
 import { supabase } from "../supabaseClient";
 import { WEATHER_OPTIONS, DUCT_FIELDS, PROJECT_OPTIONS, MACHINE_OPTIONS, dateKey, uid } from "../lib/helpers";
+import { syncExcelExport } from "../lib/exportExcel";
 import FileUpload from "./FileUpload";
 
 const emptyForm = () => ({
@@ -162,6 +163,12 @@ export default function NewReportForm({ onSubmitted }) {
       const allFiles = [...supportingFiles, ...workPhotos];
       for (const item of allFiles) {
         await uploadFile(inserted.id, item);
+      }
+
+      try {
+        await syncExcelExport();
+      } catch (exportErr) {
+        console.error("Excel export sync failed:", exportErr);
       }
 
       setForm(emptyForm());
