@@ -29,6 +29,15 @@ export const MACHINE_OPTIONS = [
 export const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10MB per file
 export const MAX_FILES = 10;
 
+// Approximate centre of the D18 Eircode area (Sandyford, Co. Dublin) —
+// Eircodes aren't reverse-geocodable for free, so this is area-level, not
+// exact-address precision. Good enough for a site weather forecast.
+export const SITE_LOCATION = {
+  label: "D18, Sandyford, Co. Dublin",
+  lat: 53.2698,
+  lon: -6.2246,
+};
+
 export function dateKey(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");

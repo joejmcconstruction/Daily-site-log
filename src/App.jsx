@@ -12,7 +12,7 @@ const PROJECT_NAME = import.meta.env.VITE_PROJECT_NAME || "Site Daily Report";
 
 export default function App() {
   const [session, setSession] = useState(undefined);
-  const [tab, setTab] = useState("new");
+  const [tab, setTab] = useState("dashboard");
   const [detailId, setDetailId] = useState(null);
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
 
@@ -74,6 +74,10 @@ export default function App() {
 
         {!detailId && (
           <div className="nav">
+            <button className={`nav-btn ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>
+              <BarChart3 size={20} strokeWidth={tab === "dashboard" ? 2.4 : 2} />
+              <span>Dashboard</span>
+            </button>
             <button className={`nav-btn ${tab === "new" ? "active" : ""}`} onClick={() => setTab("new")}>
               <ClipboardList size={20} strokeWidth={tab === "new" ? 2.4 : 2} />
               <span>New Report</span>
@@ -81,10 +85,6 @@ export default function App() {
             <button className={`nav-btn ${tab === "plant" ? "active" : ""}`} onClick={() => setTab("plant")}>
               <Truck size={20} strokeWidth={tab === "plant" ? 2.4 : 2} />
               <span>Plant Hours</span>
-            </button>
-            <button className={`nav-btn ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>
-              <BarChart3 size={20} strokeWidth={tab === "dashboard" ? 2.4 : 2} />
-              <span>Dashboard</span>
             </button>
             <button className={`nav-btn ${tab === "history" ? "active" : ""}`} onClick={goHistory}>
               <CalendarDays size={20} strokeWidth={tab === "history" ? 2.4 : 2} />
