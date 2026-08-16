@@ -7,6 +7,23 @@ const EXPORT_FILE = "site-daily-report.xlsx";
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const KEY_SEP = "|||";
 
+// Costing assumptions from Joe (2026-08-16) — see memory/project_costing_rules.md.
+// Fuel: a machine run 6 hrs/day uses 1.2x its tank capacity -> 0.2x tank per hour.
+// Labour: a driver's operating hours are costed as part of the machine (fuel +
+// labour), not counted again under ground-staff Labour hours.
+const FUEL_PRICE_PER_LITRE = 1.44; // EUR — from an EUR1440/1000L delivery, ~Aug 2026. Update here when fuel is repriced.
+const LABOUR_RATE_PER_HOUR = 30; // EUR/hour per man
+
+// Tank capacity (litres) per machine — only what Joe has given so far.
+// ASSUMPTION (flagged for Joe): he said "Hitachi 135" — no exact match in
+// MACHINE_OPTIONS, so this is mapped to "13T Hitachi" (a ~13T-class Hitachi,
+// closest fit to a "135" model designation). Confirm this is correct.
+// Remaining machines are left blank in the Rates sheet for Joe to fill in.
+const KNOWN_TANK_CAPACITY_L = {
+  "13T Hitachi": 220, // ASSUMPTION: Joe said "Hitachi 135" — confirm this is the right machine
+  Kubota: 115, // Joe said "Kubota 8.5T" — only one Kubota in the list, assumed same machine
+};
+
 const REPORT_HEADER = [
   "Date",
   "Project",
@@ -32,7 +49,6 @@ const REPORT_COL_WIDTHS = [12, 18, 12, 30, 12, 16, 16, 14, 14, 18, 14, 14, 14, 1
 const MACHINE_HEADER = ["Date", "Project", "Machine", "Hours", "Driver"];
 const MACHINE_COL_WIDTHS = [12, 18, 24, 10, 20];
 
-const RATES_HEADER = ["Name", "Rate (€/hr)"];
 const RATES_COL_WIDTHS = [26, 16];
 
 function applySheetFormatting(ws, colWidths, lastRow) {
@@ -90,18 +106,28 @@ function buildMachineSheet(machineHours, reportById) {
 }
 
 function buildRatesSheet() {
-  const names = MACHINE_OPTIONS.concat(["Labour"]);
-  const rows = names.map((name) => ({ Name: name, "Rate (€/hr)": null }));
-  const ws = XLSX.utils.json_to_sheet(rows, { header: RATES_HEADER });
-  applySheetFormatting(ws, RATES_COL_WIDTHS, rows.length + 1);
-  return { ws: ws, lastRow: rows.length + 1 };
+  const aoa = [
+    ["Fuel price (€/litre)", FUEL_PRICE_PER_LITRE],
+    ["Labour rate (€/hour)", LABOUR_RATE_PER_HOUR],
+    [],
+    ["Machine", "Tank capacity (L)"],
+  ];
+  MACHINE_OPTIONS.forEach((m) => {
+    aoa.push([m, m in KNOWN_TANK_CAPACITY_L ? KNOWN_TANK_CAPACITY_L[m] : null]);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws["!cols"] = RATES_COL_WIDTHS.map((w) => ({ wch: w }));
+  const tankTableStartRow = 5; // first machine row (row 4 is the "Machine"/"Tank capacity" header)
+  const tankTableEndRow = tankTableStartRow + MACHINE_OPTIONS.length - 1;
+  return { ws: ws, tankTableStartRow: tankTableStartRow, tankTableEndRow: tankTableEndRow };
 }
 
 // Cost Report: hours are pulled in automatically per project/machine (and labour).
-// The euro-per-hour rate is looked up from the Rates sheet, which is left blank
-// for the manager to fill in — so entering one rate updates every project that
-// used it, plus the totals below, without retyping it per project.
-function buildCostReportSheet(reports, machineHours, reportById, ratesLastRow) {
+// Fuel cost = hours x 0.2 x tank capacity x fuel price (see FUEL_PRICE_PER_LITRE
+// comment above). Labour cost = hours x labour rate. A machine's Total Cost is
+// fuel + labour for the hours it ran; a "Labour" row is ground-staff hours only
+// (no fuel), so a driver's operating hours aren't double-counted.
+function buildCostReportSheet(reports, machineHours, reportById, ratesRange) {
   var machineAgg = {};
   var machineProjects = {};
   machineHours.forEach(function (m) {
@@ -142,16 +168,33 @@ function buildCostReportSheet(reports, machineHours, reportById, ratesLastRow) {
     if (labHrs) costRows.push({ project: project, item: "Labour", hours: Number(labHrs.toFixed(2)) });
   });
 
-  var header = ["Project", "Item", "Hours", "Rate (€/hr)", "Cost (€)"];
+  var header = ["Project", "Item", "Hours", "Fuel Cost (€)", "Labour Cost (€)", "Total Cost (€)"];
   var aoa = [header];
   var formulas = [];
 
   var dataStartRow = 2;
   costRows.forEach(function (row, i) {
     var excelRow = dataStartRow + i;
-    aoa.push([row.project, row.item, row.hours, null, null]);
-    formulas.push({ r: excelRow, c: 3, f: "VLOOKUP(B" + excelRow + ",Rates!$A$2:$B$" + ratesLastRow + ",2,FALSE)" });
-    formulas.push({ r: excelRow, c: 4, f: "C" + excelRow + "*D" + excelRow });
+    var isLabour = row.item === "Labour";
+    aoa.push([row.project, row.item, row.hours, isLabour ? 0 : null, null, null]);
+    if (!isLabour) {
+      formulas.push({
+        r: excelRow,
+        c: 3,
+        f:
+          "C" +
+          excelRow +
+          "*0.2*VLOOKUP(B" +
+          excelRow +
+          ",Rates!$A$" +
+          ratesRange.tankTableStartRow +
+          ":$B$" +
+          ratesRange.tankTableEndRow +
+          ",2,FALSE)*Rates!$B$1",
+      });
+    }
+    formulas.push({ r: excelRow, c: 4, f: "C" + excelRow + "*Rates!$B$2" });
+    formulas.push({ r: excelRow, c: 5, f: "D" + excelRow + "+E" + excelRow });
   });
   var dataEndRow = dataStartRow + costRows.length - 1;
   var hasData = costRows.length > 0;
@@ -161,31 +204,31 @@ function buildCostReportSheet(reports, machineHours, reportById, ratesLastRow) {
   var totalsStartRow = dataEndRow + 3;
   projectOrder.forEach(function (project, i) {
     var excelRow = totalsStartRow + i;
-    aoa.push([project, null, null, null, null]);
+    aoa.push([project, null, null, null, null, null]);
     if (hasData) {
       formulas.push({
         r: excelRow,
-        c: 4,
-        f: "SUMIF($A$" + dataStartRow + ":$A$" + dataEndRow + ",A" + excelRow + ",$E$" + dataStartRow + ":$E$" + dataEndRow + ")",
+        c: 5,
+        f: "SUMIF($A$" + dataStartRow + ":$A$" + dataEndRow + ",A" + excelRow + ",$F$" + dataStartRow + ":$F$" + dataEndRow + ")",
       });
     } else {
-      aoa[excelRow - 1][4] = 0;
+      aoa[excelRow - 1][5] = 0;
     }
   });
   var totalsEndRow = totalsStartRow + projectOrder.length - 1;
 
   aoa.push([]);
   var grandTotalRow = totalsEndRow + 2;
-  aoa.push(["Grand Total", null, null, null, null]);
-  formulas.push({ r: grandTotalRow, c: 4, f: "SUM($E$" + totalsStartRow + ":$E$" + totalsEndRow + ")" });
+  aoa.push(["Grand Total", null, null, null, null, null]);
+  formulas.push({ r: grandTotalRow, c: 5, f: "SUM($F$" + totalsStartRow + ":$F$" + totalsEndRow + ")" });
 
   var ws = XLSX.utils.aoa_to_sheet(aoa);
   formulas.forEach(function (cell) {
     ws[XLSX.utils.encode_cell({ r: cell.r - 1, c: cell.c })] = { t: "n", f: cell.f };
   });
 
-  ws["!autofilter"] = { ref: "A1:E" + Math.max(dataEndRow, 1) };
-  ws["!cols"] = [{ wch: 20 }, { wch: 22 }, { wch: 10 }, { wch: 14 }, { wch: 14 }];
+  ws["!autofilter"] = { ref: "A1:F" + Math.max(dataEndRow, 1) };
+  ws["!cols"] = [{ wch: 20 }, { wch: 22 }, { wch: 10 }, { wch: 14 }, { wch: 15 }, { wch: 14 }];
   return ws;
 }
 
@@ -202,7 +245,7 @@ export function buildWorkbook(data) {
   XLSX.utils.book_append_sheet(wb, buildMachineSheet(machineHours, reportById), "Machine Hours");
   var ratesResult = buildRatesSheet();
   XLSX.utils.book_append_sheet(wb, ratesResult.ws, "Rates");
-  XLSX.utils.book_append_sheet(wb, buildCostReportSheet(reports, machineHours, reportById, ratesResult.lastRow), "Cost Report");
+  XLSX.utils.book_append_sheet(wb, buildCostReportSheet(reports, machineHours, reportById, ratesResult), "Cost Report");
 
   return wb;
 }
