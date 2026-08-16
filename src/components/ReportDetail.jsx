@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ArrowLeft, Cloud, Sun, CloudDrizzle, CloudRain, Trash2, FileText, Loader2 } from "lucide-react";
+import { ArrowLeft, Cloud, Sun, CloudDrizzle, CloudRain, Trash2, FileText, Loader2, Wrench } from "lucide-react";
 import { supabase } from "../supabaseClient";
 import { prettyDate, shortTime, fileSizeLabel, DUCT_FIELDS } from "../lib/helpers";
 
@@ -8,6 +8,7 @@ const WEATHER_ICONS = { Sunny: Sun, Overcast: Cloud, "Light rain": CloudDrizzle,
 export default function ReportDetail({ reportId, onBack, onDeleted }) {
   const [report, setReport] = useState(null);
   const [files, setFiles] = useState([]);
+  const [machines, setMachines] = useState([]);
   const [loading, setLoading] = useState(true);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -18,8 +19,10 @@ export default function ReportDetail({ reportId, onBack, onDeleted }) {
       setLoading(true);
       const { data: reportData } = await supabase.from("reports").select("*").eq("id", reportId).single();
       const { data: fileData } = await supabase.from("report_files").select("*").eq("report_id", reportId);
+      const { data: machineData } = await supabase.from("machine_hours").select("*").eq("report_id", reportId);
       if (cancelled) return;
       setReport(reportData);
+      setMachines(machineData || []);
       setFiles(
         (fileData || []).map((f) => ({
           ...f,
@@ -86,8 +89,15 @@ export default function ReportDetail({ reportId, onBack, onDeleted }) {
         </div>
       </div>
 
+      {report.project_name && <div className="project-badge">{report.project_name}</div>}
+
       <div className="eyebrow">Staff on site</div>
       <p className="detail-text">{report.staff_on_site}</p>
+      {report.labour_hours != null && (
+        <p className="detail-text" style={{ color: "var(--text-muted)", fontSize: 12.5 }}>
+          {report.labour_hours} total labour hours
+        </p>
+      )}
 
       <div className="eyebrow">Work completed</div>
       <p className="detail-text">{report.description}</p>
@@ -103,6 +113,24 @@ export default function ReportDetail({ reportId, onBack, onDeleted }) {
                   {report[d.key]}
                   {d.unit && <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 400 }}> {d.unit}</span>}
                 </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {machines.length > 0 && (
+        <>
+          <div className="eyebrow">Plant / Machine Hours</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {machines.map((m) => (
+              <div className="card" key={m.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <Wrench size={15} color="var(--accent-2)" />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{m.machine_name}</div>
+                  <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>Driver: {m.driver_name}</div>
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace" }}>{m.hours}h</div>
               </div>
             ))}
           </div>

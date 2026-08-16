@@ -1,12 +1,14 @@
 import React, { useState, useRef } from "react";
-import { Check, AlertCircle, Loader2, Camera, Paperclip } from "lucide-react";
+import { Check, AlertCircle, Loader2, Camera, Paperclip, Plus, X } from "lucide-react";
 import { supabase } from "../supabaseClient";
-import { WEATHER_OPTIONS, DUCT_FIELDS, dateKey, uid } from "../lib/helpers";
+import { WEATHER_OPTIONS, DUCT_FIELDS, PROJECT_OPTIONS, MACHINE_OPTIONS, dateKey, uid } from "../lib/helpers";
 import FileUpload from "./FileUpload";
 
 const emptyForm = () => ({
+  project_name: "",
   weather: "",
   staff_on_site: "",
+  labour_hours: "",
   description: "",
   trench_excavated: "",
   trench_backfilled: "",
@@ -22,11 +24,15 @@ const emptyForm = () => ({
   additional_work: "",
 });
 
+const emptyMachineRow = () => ({ id: uid(), machine_name: "", hours: "", driver_name: "" });
+
 export default function NewReportForm({ onSubmitted }) {
   const [form, setForm] = useState(emptyForm());
+  const [machines, setMachines] = useState([]);
   const [supportingFiles, setSupportingFiles] = useState([]);
   const [workPhotos, setWorkPhotos] = useState([]);
   const [errors, setErrors] = useState({});
+  const [machineErrors, setMachineErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [submitError, setSubmitError] = useState("");
@@ -37,10 +43,30 @@ export default function NewReportForm({ onSubmitted }) {
     if (errors[key]) setErrors((e) => ({ ...e, [key]: false }));
   }
 
+  function addMachine() {
+    setMachines((prev) => [...prev, emptyMachineRow()]);
+  }
+
+  function removeMachine(id) {
+    setMachines((prev) => prev.filter((m) => m.id !== id));
+    setMachineErrors((e) => {
+      const next = { ...e };
+      delete next[id];
+      return next;
+    });
+  }
+
+  function setMachineField(id, key, value) {
+    setMachines((prev) => prev.map((m) => (m.id === id ? { ...m, [key]: value } : m)));
+    setMachineErrors((e) => (e[id]?.[key] ? { ...e, [id]: { ...e[id], [key]: false } } : e));
+  }
+
   function validate() {
     const req = {
+      project_name: form.project_name,
       weather: form.weather,
       staff_on_site: form.staff_on_site,
+      labour_hours: form.labour_hours,
       description: form.description,
       trench_excavated: form.trench_excavated,
       trench_backfilled: form.trench_backfilled,
@@ -51,8 +77,19 @@ export default function NewReportForm({ onSubmitted }) {
       if (!v || String(v).trim() === "") newErrors[k] = true;
     });
     if (workPhotos.length === 0) newErrors.workPhotos = true;
+
+    const newMachineErrors = {};
+    machines.forEach((m) => {
+      const rowErrors = {};
+      if (!m.machine_name) rowErrors.machine_name = true;
+      if (!m.hours || String(m.hours).trim() === "") rowErrors.hours = true;
+      if (!m.driver_name || !m.driver_name.trim()) rowErrors.driver_name = true;
+      if (Object.keys(rowErrors).length > 0) newMachineErrors[m.id] = rowErrors;
+    });
+
     setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    setMachineErrors(newMachineErrors);
+    return Object.keys(newErrors).length === 0 && Object.keys(newMachineErrors).length === 0;
   }
 
   async function uploadFile(reportId, item) {
@@ -83,10 +120,13 @@ export default function NewReportForm({ onSubmitted }) {
     setSubmitting(true);
     try {
       const { data: userData } = await supabase.auth.getUser();
+      const reportDate = dateKey(new Date());
       const payload = {
-        report_date: dateKey(new Date()),
+        report_date: reportDate,
+        project_name: form.project_name,
         weather: form.weather,
         staff_on_site: form.staff_on_site,
+        labour_hours: form.labour_hours || null,
         description: form.description,
         trench_excavated: form.trench_excavated || null,
         trench_backfilled: form.trench_backfilled || null,
@@ -106,12 +146,26 @@ export default function NewReportForm({ onSubmitted }) {
       const { data: inserted, error: insertError } = await supabase.from("reports").insert(payload).select().single();
       if (insertError) throw insertError;
 
+      if (machines.length > 0) {
+        const machineRows = machines.map((m) => ({
+          report_id: inserted.id,
+          log_date: reportDate,
+          machine_name: m.machine_name,
+          hours: m.hours,
+          driver_name: m.driver_name.trim(),
+          created_by: userData?.user?.id || null,
+        }));
+        const { error: machineError } = await supabase.from("machine_hours").insert(machineRows);
+        if (machineError) throw machineError;
+      }
+
       const allFiles = [...supportingFiles, ...workPhotos];
       for (const item of allFiles) {
         await uploadFile(inserted.id, item);
       }
 
       setForm(emptyForm());
+      setMachines([]);
       setSupportingFiles([]);
       setWorkPhotos([]);
       setSubmitted(true);
@@ -139,12 +193,32 @@ export default function NewReportForm({ onSubmitted }) {
           <span>{submitError}</span>
         </div>
       )}
-      {Object.keys(errors).length > 0 && (
+      {(Object.keys(errors).length > 0 || Object.keys(machineErrors).length > 0) && (
         <div className="banner error">
           <AlertCircle size={16} color="var(--danger)" />
           <span>Fill in the required fields marked in red below.</span>
         </div>
       )}
+
+      <div className="eyebrow" style={{ marginTop: 0 }}>Project</div>
+      <div className="field">
+        <label className="label">
+          Which project is this report for? <span className="req">*</span>
+        </label>
+        <select
+          className={`input ${errors.project_name ? "error" : ""}`}
+          value={form.project_name}
+          onChange={(e) => setField("project_name", e.target.value)}
+        >
+          <option value="">Select project...</option>
+          {PROJECT_OPTIONS.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+        {errors.project_name && <div className="hint error">Project is required</div>}
+      </div>
 
       <div className="eyebrow">Conditions</div>
       <div className="field">
@@ -174,6 +248,23 @@ export default function NewReportForm({ onSubmitted }) {
           onChange={(e) => setField("staff_on_site", e.target.value)}
         />
         {errors.staff_on_site && <div className="hint error">Staff on site is required</div>}
+      </div>
+
+      <div className="field">
+        <label className="label">
+          Labour hours (total man-hours on site today) <span className="req">*</span>
+        </label>
+        <input
+          className={`input ${errors.labour_hours ? "error" : ""}`}
+          type="number"
+          inputMode="decimal"
+          min="0"
+          step="any"
+          placeholder="0"
+          value={form.labour_hours}
+          onChange={(e) => setField("labour_hours", e.target.value)}
+        />
+        {errors.labour_hours && <div className="hint error">Labour hours is required</div>}
       </div>
 
       <div className="field">
@@ -215,6 +306,73 @@ export default function NewReportForm({ onSubmitted }) {
           </div>
         ))}
       </div>
+
+      <div className="eyebrow">
+        Plant / Machine Hours
+        <div className="eyebrow-sub">Add a row for each machine used on site today (optional).</div>
+      </div>
+      {machines.map((m) => {
+        const rowErr = machineErrors[m.id] || {};
+        return (
+          <div className="machine-row" key={m.id}>
+            <button type="button" className="machine-row-remove" onClick={() => removeMachine(m.id)}>
+              <X size={13} color="var(--text-muted)" />
+            </button>
+            <div className="field">
+              <label className="label">
+                Machine <span className="req">*</span>
+              </label>
+              <select
+                className={`input ${rowErr.machine_name ? "error" : ""}`}
+                value={m.machine_name}
+                onChange={(e) => setMachineField(m.id, "machine_name", e.target.value)}
+              >
+                <option value="">Select machine...</option>
+                {MACHINE_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+              </select>
+              {rowErr.machine_name && <div className="hint error">Machine is required</div>}
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                <label className="label">
+                  Hours <span className="req">*</span>
+                </label>
+                <input
+                  className={`input ${rowErr.hours ? "error" : ""}`}
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="any"
+                  placeholder="0"
+                  value={m.hours}
+                  onChange={(e) => setMachineField(m.id, "hours", e.target.value)}
+                />
+                {rowErr.hours && <div className="hint error">Hours is required</div>}
+              </div>
+              <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                <label className="label">
+                  Driver <span className="req">*</span>
+                </label>
+                <input
+                  className={`input ${rowErr.driver_name ? "error" : ""}`}
+                  type="text"
+                  placeholder="Name"
+                  value={m.driver_name}
+                  onChange={(e) => setMachineField(m.id, "driver_name", e.target.value)}
+                />
+                {rowErr.driver_name && <div className="hint error">Driver is required</div>}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+      <button type="button" className="btn-secondary" onClick={addMachine}>
+        <Plus size={15} /> Add machine
+      </button>
 
       <div className="eyebrow">Delays &amp; Variations</div>
       <div className="field">

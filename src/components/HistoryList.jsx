@@ -16,7 +16,7 @@ export default function HistoryList({ onOpen, refreshKey }) {
       setLoading(true);
       const { data, error: fetchError } = await supabase
         .from("reports")
-        .select("id, report_date, created_at, weather, staff_on_site, description, report_files(kind)")
+        .select("id, report_date, created_at, weather, staff_on_site, description, project_name, report_files(kind)")
         .order("report_date", { ascending: false })
         .order("created_at", { ascending: false });
       if (cancelled) return;
@@ -79,6 +79,7 @@ export default function HistoryList({ onOpen, refreshKey }) {
                   <span style={{ fontWeight: 700, fontSize: 13.5, fontFamily: "'IBM Plex Mono', monospace" }}>{prettyDate(r.report_date)}</span>
                   <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{shortTime(r.created_at)}</span>
                 </div>
+                {r.project_name && <div className="project-badge">{r.project_name}</div>}
                 <div className="report-row-desc">{r.description}</div>
                 <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
                   {photoCount > 0 && (

@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { ClipboardList, CalendarDays, LogOut, Loader2, Truck, BarChart3 } from "lucide-react";
+import { ClipboardList, CalendarDays, LogOut, Loader2, BarChart3, Wallet } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import Login from "./components/Login";
 import NewReportForm from "./components/NewReportForm";
 import HistoryList from "./components/HistoryList";
 import ReportDetail from "./components/ReportDetail";
-import PlantHours from "./components/PlantHours";
 import Dashboard from "./components/Dashboard";
+import CostsPage from "./components/CostsPage";
 
 const PROJECT_NAME = import.meta.env.VITE_PROJECT_NAME || "Site Daily Report";
 
@@ -57,8 +57,8 @@ export default function App() {
 
         <div className="body">
           {tab === "new" && !detailId && <NewReportForm onSubmitted={() => setHistoryRefreshKey((k) => k + 1)} />}
-          {tab === "plant" && !detailId && <PlantHours />}
           {tab === "dashboard" && !detailId && <Dashboard />}
+          {tab === "costs" && !detailId && <CostsPage />}
           {tab === "history" && !detailId && <HistoryList refreshKey={historyRefreshKey} onOpen={setDetailId} />}
           {detailId && (
             <ReportDetail
@@ -82,9 +82,9 @@ export default function App() {
               <ClipboardList size={20} strokeWidth={tab === "new" ? 2.4 : 2} />
               <span>New Report</span>
             </button>
-            <button className={`nav-btn ${tab === "plant" ? "active" : ""}`} onClick={() => setTab("plant")}>
-              <Truck size={20} strokeWidth={tab === "plant" ? 2.4 : 2} />
-              <span>Plant Hours</span>
+            <button className={`nav-btn ${tab === "costs" ? "active" : ""}`} onClick={() => setTab("costs")}>
+              <Wallet size={20} strokeWidth={tab === "costs" ? 2.4 : 2} />
+              <span>Costs</span>
             </button>
             <button className={`nav-btn ${tab === "history" ? "active" : ""}`} onClick={goHistory}>
               <CalendarDays size={20} strokeWidth={tab === "history" ? 2.4 : 2} />

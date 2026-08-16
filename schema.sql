@@ -129,3 +129,57 @@ create policy "Authenticated users can insert machine hours"
 on public.machine_hours for insert
 to authenticated
 with check (true);
+
+-- ---------- Combine reports + machine hours, add project & labour tracking ----------
+-- Every report now records which project it's for and total labour hours,
+-- and machine hours logged in the same submission link back to their report.
+
+alter table public.reports add column if not exists project_name text;
+alter table public.reports add column if not exists labour_hours numeric;
+
+alter table public.machine_hours add column if not exists report_id uuid references public.reports(id) on delete cascade;
+
+-- ---------- Cost rates (hourly cost per machine + a labour rate) ----------
+create table public.cost_rates (
+  id uuid primary key default gen_random_uuid(),
+  updated_at timestamptz not null default now(),
+  rate_type text not null check (rate_type in ('machine', 'labour')),
+  name text not null,
+  hourly_rate numeric not null default 0,
+  unique (rate_type, name)
+);
+
+alter table public.cost_rates enable row level security;
+
+create policy "Authenticated users can view cost rates"
+on public.cost_rates for select
+to authenticated
+using (true);
+
+create policy "Authenticated users can insert cost rates"
+on public.cost_rates for insert
+to authenticated
+with check (true);
+
+create policy "Authenticated users can update cost rates"
+on public.cost_rates for update
+to authenticated
+using (true)
+with check (true);
+
+-- Seed a rate row per machine, plus one for labour. All start at 0 —
+-- set the real hourly costs on the Costs tab in the app.
+insert into public.cost_rates (rate_type, name, hourly_rate)
+values
+  ('machine', '13T Hitachi', 0),
+  ('machine', 'Kubota', 0),
+  ('machine', 'Hitachi 225', 0),
+  ('machine', 'Kobelco 140', 0),
+  ('machine', 'Wacker Neuson Excavator', 0),
+  ('machine', 'Yanmar 0.8T', 0),
+  ('machine', 'Bobcat 1T', 0),
+  ('machine', '10T Thwaites Dumper', 0),
+  ('machine', '6T Thwaites Dumper', 0),
+  ('machine', 'Wacker Plate', 0),
+  ('labour', 'Labour', 0)
+on conflict (rate_type, name) do nothing;
