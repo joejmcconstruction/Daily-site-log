@@ -10,7 +10,20 @@ export const DUCT_FIELDS = [
   { key: "eir_duct", label: "Eir duct installed", unit: "m", required: false },
   { key: "siro_duct", label: "Siro duct installed", unit: "m", required: false },
   { key: "ev_charger_duct", label: "EV charger duct installed", unit: "m", required: false },
-  { key: "chambers_fitted", label: "Chambers fitted", unit: "units", required: false },
+  { key: "chambers_fitted", label: "Chambers fitted", unit: "units", required: true },
+];
+
+export const MACHINE_OPTIONS = [
+  "13T Hitachi",
+  "Kubota",
+  "Hitachi 225",
+  "Kobelco 140",
+  "Wacker Neuson Excavator",
+  "Yanmar 0.8T",
+  "Bobcat 1T",
+  "10T Thwaites Dumper",
+  "6T Thwaites Dumper",
+  "Wacker Plate",
 ];
 
 export const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10MB per file

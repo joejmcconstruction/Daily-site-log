@@ -44,6 +44,7 @@ export default function NewReportForm({ onSubmitted }) {
       description: form.description,
       trench_excavated: form.trench_excavated,
       trench_backfilled: form.trench_backfilled,
+      chambers_fitted: form.chambers_fitted,
     };
     const newErrors = {};
     Object.entries(req).forEach(([k, v]) => {

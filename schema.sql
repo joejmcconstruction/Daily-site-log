@@ -106,3 +106,26 @@ create policy "authenticated users can delete files"
   on storage.objects for delete
   to authenticated
   using (bucket_id = 'site-reports');
+
+-- ---------- Plant / machine hours ----------
+create table public.machine_hours (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id),
+  log_date date not null,
+  machine_name text not null,
+  hours numeric not null,
+  driver_name text not null
+);
+
+alter table public.machine_hours enable row level security;
+
+create policy "Authenticated users can view machine hours"
+on public.machine_hours for select
+to authenticated
+using (true);
+
+create policy "Authenticated users can insert machine hours"
+on public.machine_hours for insert
+to authenticated
+with check (true);
