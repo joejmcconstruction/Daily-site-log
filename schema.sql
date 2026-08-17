@@ -188,12 +188,12 @@ create table public.admin_users (
 
 alter table public.admin_users enable row level security;
 
-create policy "admins can view admin list"
-on public.admin_users for select
-to authenticated
-using (auth.uid() in (select user_id from public.admin_users));
-
--- Helper used by every admin-only policy below.
+-- Helper used by every admin-only policy, including this table's own.
+-- security definer lets it read admin_users without going through RLS,
+-- which matters here specifically: a select policy on admin_users that
+-- queried admin_users directly (auth.uid() in (select user_id from
+-- admin_users)) would be self-referential and fail with "infinite
+-- recursion detected in policy for relation admin_users".
 create or replace function public.is_admin()
 returns boolean
 language sql
@@ -202,6 +202,11 @@ stable
 as $$
   select exists (select 1 from public.admin_users where user_id = auth.uid());
 $$;
+
+create policy "admins can view admin list"
+on public.admin_users for select
+to authenticated
+using (public.is_admin());
 
 -- ---------- Compliance certs (machines + vehicles) ----------
 create table public.compliance_certs (
