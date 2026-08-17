@@ -330,3 +330,60 @@ using (bucket_id = 'admin-documents' and public.is_admin());
 -- insert into public.admin_users (user_id)
 -- select id from auth.users where email = 'someone@example.com'
 -- on conflict do nothing;
+
+-- ============================================================
+-- Lock report history down to each crew member's own reports
+-- ============================================================
+-- Previously every signed-in user could read/insert/delete every report,
+-- machine-hours row, and attached file. Now each user only sees and manages
+-- their own; admins (is_admin()) still see and manage everything.
+-- Note: this does not change the site-reports storage bucket itself, which
+-- stays public (file URLs are long random paths, not guessable/listable) —
+-- only the database rows describing who owns what are now restricted.
+
+drop policy if exists "authenticated users can read reports" on reports;
+drop policy if exists "authenticated users can insert reports" on reports;
+drop policy if exists "authenticated users can delete reports" on reports;
+
+create policy "users read own reports, admins read all"
+on reports for select to authenticated
+using (created_by = auth.uid() or public.is_admin());
+
+create policy "users insert own reports"
+on reports for insert to authenticated
+with check (created_by = auth.uid());
+
+create policy "users delete own reports, admins delete all"
+on reports for delete to authenticated
+using (created_by = auth.uid() or public.is_admin());
+
+drop policy if exists "authenticated users can read report_files" on report_files;
+drop policy if exists "authenticated users can insert report_files" on report_files;
+drop policy if exists "authenticated users can delete report_files" on report_files;
+
+create policy "users read own report files, admins read all"
+on report_files for select to authenticated
+using (exists (select 1 from reports r where r.id = report_files.report_id and (r.created_by = auth.uid() or public.is_admin())));
+
+create policy "users insert own report files"
+on report_files for insert to authenticated
+with check (exists (select 1 from reports r where r.id = report_files.report_id and r.created_by = auth.uid()));
+
+create policy "users delete own report files, admins delete all"
+on report_files for delete to authenticated
+using (exists (select 1 from reports r where r.id = report_files.report_id and (r.created_by = auth.uid() or public.is_admin())));
+
+drop policy if exists "Authenticated users can view machine hours" on public.machine_hours;
+drop policy if exists "Authenticated users can insert machine hours" on public.machine_hours;
+
+create policy "users view own machine hours, admins view all"
+on public.machine_hours for select to authenticated
+using (created_by = auth.uid() or public.is_admin());
+
+create policy "users insert own machine hours"
+on public.machine_hours for insert to authenticated
+with check (created_by = auth.uid());
+
+create policy "users delete own machine hours, admins delete all"
+on public.machine_hours for delete to authenticated
+using (created_by = auth.uid() or public.is_admin());
