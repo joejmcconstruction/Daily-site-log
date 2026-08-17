@@ -271,6 +271,7 @@ export default function NewReportForm({ onSubmitted }) {
           value={form.labour_hours}
           onChange={(e) => setField("labour_hours", e.target.value)}
         />
+        <div className="hint">Everyone's full hours, including anyone driving plant — machine hours below are subtracted automatically so driving time isn't paid twice.</div>
         {errors.labour_hours && <div className="hint error">Labour hours is required</div>}
       </div>
 

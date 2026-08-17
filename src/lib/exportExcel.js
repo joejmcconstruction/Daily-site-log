@@ -8,10 +8,16 @@ const EXPORT_FILE = "site-daily-report.xlsx";
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const KEY_SEP = "|||";
 
-// Costing assumptions from Joe (2026-08-16) — see memory/project_costing_rules.md.
+// Costing assumptions from Joe (2026-08-16, refined 2026-08-17) — see
+// memory/project_costing_rules.md.
 // Fuel: a machine run 6 hrs/day uses 1.2x its tank capacity -> 0.2x tank per hour.
 // Labour: a driver's operating hours are costed as part of the machine (fuel +
-// labour), not counted again under ground-staff Labour hours.
+// labour). The "Labour hours" field on a report is entered as everyone's GROSS
+// total man-hours for the day (e.g. 3 staff x 7.75hrs), so before costing it as
+// ground labour, that report's total machine hours are subtracted (floored at
+// 0) — otherwise a driver's hours get paid once on the machine row and again
+// inside the ground-labour total. Example: 7.75hrs entered, 6hrs of that spent
+// driving the 13T Hitachi -> 1.75hrs costed as ground labour for that report.
 const FUEL_PRICE_PER_LITRE = 1.44; // EUR — from an EUR1440/1000L delivery, ~Aug 2026. Update here when fuel is repriced.
 const LABOUR_RATE_PER_HOUR = 30; // EUR/hour per man
 
@@ -49,6 +55,23 @@ const REPORT_COL_WIDTHS = [12, 18, 12, 30, 12, 16, 16, 14, 14, 18, 14, 14, 14, 1
 
 const MACHINE_HEADER = ["Date", "Project", "Machine", "Hours", "Driver"];
 const MACHINE_COL_WIDTHS = [12, 18, 24, 10, 20];
+
+// Sums machine hours per report_id, so gross labour hours can be netted down
+// to ground-only hours per report before costing (see costing assumptions above).
+function machineHoursByReportId(machineHours) {
+  const byReport = {};
+  machineHours.forEach((m) => {
+    if (!m.report_id) return;
+    byReport[m.report_id] = (byReport[m.report_id] || 0) + (Number(m.hours) || 0);
+  });
+  return byReport;
+}
+
+function groundLabourHours(report, machineHoursByReport) {
+  const gross = Number(report.labour_hours) || 0;
+  const driven = machineHoursByReport[report.id] || 0;
+  return Math.max(0, gross - driven);
+}
 
 function applyAutoFilterAndHeaderStyle(ws, colCount, lastRow) {
   ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(lastRow, 1), column: colCount } };
@@ -122,8 +145,8 @@ function buildRatesSheet(wb) {
 // Cost Report: hours are pulled in automatically per project/machine (and labour).
 // Fuel cost = hours x 0.2 x tank capacity x fuel price. Labour cost = hours x
 // labour rate. A machine's Total Cost is fuel + labour for the hours it ran; a
-// "Labour" row is ground-staff hours only (no fuel), so a driver's operating
-// hours aren't double-counted.
+// "Labour" row is ground-staff hours only (no fuel) — netted down per report
+// via groundLabourHours() so a driver's operating hours aren't double-counted.
 function buildCostReportSheet(wb, reports, machineHours, reportById, ratesRange) {
   const machineAgg = {};
   const machineProjects = new Set();
@@ -135,10 +158,11 @@ function buildCostReportSheet(wb, reports, machineHours, reportById, ratesRange)
     machineAgg[key] = (machineAgg[key] || 0) + (Number(m.hours) || 0);
   });
 
+  const machineHoursByReport = machineHoursByReportId(machineHours);
   const labourAgg = {};
   reports.forEach((r) => {
     const project = r.project_name || "Unassigned";
-    labourAgg[project] = (labourAgg[project] || 0) + (Number(r.labour_hours) || 0);
+    labourAgg[project] = (labourAgg[project] || 0) + groundLabourHours(r, machineHoursByReport);
   });
 
   const projectOrder = [...PROJECT_OPTIONS];
@@ -243,12 +267,13 @@ function aggregateForDashboard(reports, machineHours, reportById) {
     return byProject[p];
   }
 
+  const machineHoursByReport = machineHoursByReportId(machineHours);
   reports.forEach((r) => {
     const b = bucket(r.project_name || "Unassigned");
     b.reportCount += 1;
     b.trenchExcavated += Number(r.trench_excavated) || 0;
     b.trenchBackfilled += Number(r.trench_backfilled) || 0;
-    b.labourHoursGround += Number(r.labour_hours) || 0;
+    b.labourHoursGround += groundLabourHours(r, machineHoursByReport);
   });
 
   const machineHoursByProjectMachine = {};
@@ -361,7 +386,7 @@ function buildDashboardSheet(wb, reports, machineHours, reportById) {
   const notes = [
     "Regenerated automatically every time a report is submitted or deleted — always current with live data. Charts are pictures, redrawn on every regeneration, not native Excel charts reactive to manual cell edits.",
     "Fuel rule: a machine run 6 hrs/day uses 1.2x its tank capacity -> 0.2x tank per hour, at the price on the Rates sheet.",
-    "Labour rate is on the Rates sheet. A driver's operating hours are costed under the machine, not counted again as ground-staff labour.",
+    "Labour rate is on the Rates sheet. \"Labour hours\" on a report is everyone's gross total for the day — that report's machine hours are automatically subtracted before it's costed as ground labour, so a driver's hours aren't paid twice (e.g. 7.75hrs entered, 6hrs driving -> 1.75hrs costed as ground labour).",
     '"13T Hitachi" tank capacity (220L) is an assumed match for a machine Joe called "Hitachi 135" — confirm this is correct.',
     "Tank capacities for the remaining machines are blank on the Rates sheet until filled in — those machines show €0 fuel cost.",
   ];
