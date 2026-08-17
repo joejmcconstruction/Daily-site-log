@@ -173,3 +173,155 @@ create policy "authenticated users can update export files"
 -- Optional cleanup: if you already ran an earlier version of this file that
 -- created a cost_rates table, it's no longer used and safe to drop:
 -- drop table if exists public.cost_rates;
+
+-- ============================================================
+-- Admin management module (private — Joe + a small admin allowlist only)
+-- ============================================================
+-- Restricted to whoever is listed in admin_users. Crew accounts never see
+-- this data or these tabs — enforced at the database level via RLS, not
+-- just hidden in the app UI, so it can't be reached even via devtools.
+
+create table public.admin_users (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+alter table public.admin_users enable row level security;
+
+create policy "admins can view admin list"
+on public.admin_users for select
+to authenticated
+using (auth.uid() in (select user_id from public.admin_users));
+
+-- Helper used by every admin-only policy below.
+create or replace function public.is_admin()
+returns boolean
+language sql
+security definer
+stable
+as $$
+  select exists (select 1 from public.admin_users where user_id = auth.uid());
+$$;
+
+-- ---------- Compliance certs (machines + vehicles) ----------
+create table public.compliance_certs (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id),
+  category text not null check (category in ('machine', 'vehicle')),
+  subject_name text not null, -- machine name (from the app's machine list) or vehicle registration
+  cert_type text not null,    -- e.g. 'GA1', 'NCT', 'Tax', 'Insurance', or a custom type
+  issue_date date,
+  expiry_date date not null,
+  file_path text,             -- path in the private admin-documents bucket, if a photo/file was attached
+  file_name text,
+  notes text
+);
+
+alter table public.compliance_certs enable row level security;
+
+create policy "admins can view compliance certs"
+on public.compliance_certs for select to authenticated using (public.is_admin());
+create policy "admins can insert compliance certs"
+on public.compliance_certs for insert to authenticated with check (public.is_admin());
+create policy "admins can update compliance certs"
+on public.compliance_certs for update to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "admins can delete compliance certs"
+on public.compliance_certs for delete to authenticated using (public.is_admin());
+
+-- ---------- Employees ----------
+create table public.employees (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id),
+  full_name text not null,
+  role text,
+  start_date date,
+  annual_holiday_allowance numeric not null default 20,
+  notes text
+);
+
+alter table public.employees enable row level security;
+
+create policy "admins can view employees"
+on public.employees for select to authenticated using (public.is_admin());
+create policy "admins can insert employees"
+on public.employees for insert to authenticated with check (public.is_admin());
+create policy "admins can update employees"
+on public.employees for update to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "admins can delete employees"
+on public.employees for delete to authenticated using (public.is_admin());
+
+-- ---------- Employee training records ----------
+create table public.employee_training (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  employee_id uuid not null references public.employees(id) on delete cascade,
+  training_name text not null,
+  completed_date date,
+  expiry_date date,
+  file_path text,             -- path in the private admin-documents bucket, if a photo/file was attached
+  file_name text,
+  notes text
+);
+
+alter table public.employee_training enable row level security;
+
+create policy "admins can view employee training"
+on public.employee_training for select to authenticated using (public.is_admin());
+create policy "admins can insert employee training"
+on public.employee_training for insert to authenticated with check (public.is_admin());
+create policy "admins can update employee training"
+on public.employee_training for update to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "admins can delete employee training"
+on public.employee_training for delete to authenticated using (public.is_admin());
+
+-- ---------- Employee holidays ----------
+create table public.employee_holidays (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  employee_id uuid not null references public.employees(id) on delete cascade,
+  start_date date not null,
+  end_date date not null,
+  notes text
+);
+
+alter table public.employee_holidays enable row level security;
+
+create policy "admins can view employee holidays"
+on public.employee_holidays for select to authenticated using (public.is_admin());
+create policy "admins can insert employee holidays"
+on public.employee_holidays for insert to authenticated with check (public.is_admin());
+create policy "admins can update employee holidays"
+on public.employee_holidays for update to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "admins can delete employee holidays"
+on public.employee_holidays for delete to authenticated using (public.is_admin());
+
+-- ---------- Private storage for cert/training photos & files ----------
+-- Not public like site-reports — only admins can read or write here.
+insert into storage.buckets (id, name, public)
+values ('admin-documents', 'admin-documents', false)
+on conflict (id) do nothing;
+
+create policy "admins can read admin documents"
+on storage.objects for select to authenticated
+using (bucket_id = 'admin-documents' and public.is_admin());
+
+create policy "admins can upload admin documents"
+on storage.objects for insert to authenticated
+with check (bucket_id = 'admin-documents' and public.is_admin());
+
+create policy "admins can update admin documents"
+on storage.objects for update to authenticated
+using (bucket_id = 'admin-documents' and public.is_admin())
+with check (bucket_id = 'admin-documents' and public.is_admin());
+
+create policy "admins can delete admin documents"
+on storage.objects for delete to authenticated
+using (bucket_id = 'admin-documents' and public.is_admin());
+
+-- Add an admin: they must already have a login (Supabase Dashboard >
+-- Authentication > Users > Add user) before running this.
+-- insert into public.admin_users (user_id)
+-- select id from auth.users where email = 'someone@example.com'
+-- on conflict do nothing;

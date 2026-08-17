@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from "react";
-import { ClipboardList, CalendarDays, LogOut, Loader2, BarChart3 } from "lucide-react";
+import { ClipboardList, CalendarDays, LogOut, Loader2, BarChart3, ShieldCheck, Users } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import Login from "./components/Login";
 import NewReportForm from "./components/NewReportForm";
 import HistoryList from "./components/HistoryList";
 import ReportDetail from "./components/ReportDetail";
 import Dashboard from "./components/Dashboard";
+import CertsPage from "./components/admin/CertsPage";
+import StaffPage from "./components/admin/StaffPage";
 
 const PROJECT_NAME = import.meta.env.VITE_PROJECT_NAME || "Site Daily Report";
 
@@ -14,12 +16,32 @@ export default function App() {
   const [tab, setTab] = useState("dashboard");
   const [detailId, setDetailId] = useState(null);
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
     const { data: listener } = supabase.auth.onAuthStateChange((_event, sess) => setSession(sess));
     return () => listener.subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!session) {
+      setIsAdmin(false);
+      return;
+    }
+    let cancelled = false;
+    supabase
+      .from("admin_users")
+      .select("user_id")
+      .eq("user_id", session.user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled) setIsAdmin(!!data);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
 
   if (session === undefined) {
     return (
@@ -58,6 +80,8 @@ export default function App() {
           {tab === "new" && !detailId && <NewReportForm onSubmitted={() => setHistoryRefreshKey((k) => k + 1)} />}
           {tab === "dashboard" && !detailId && <Dashboard />}
           {tab === "history" && !detailId && <HistoryList refreshKey={historyRefreshKey} onOpen={setDetailId} />}
+          {tab === "certs" && !detailId && isAdmin && <CertsPage />}
+          {tab === "staff" && !detailId && isAdmin && <StaffPage />}
           {detailId && (
             <ReportDetail
               reportId={detailId}
@@ -84,6 +108,18 @@ export default function App() {
               <CalendarDays size={20} strokeWidth={tab === "history" ? 2.4 : 2} />
               <span>History</span>
             </button>
+            {isAdmin && (
+              <button className={`nav-btn ${tab === "certs" ? "active" : ""}`} onClick={() => setTab("certs")}>
+                <ShieldCheck size={20} strokeWidth={tab === "certs" ? 2.4 : 2} />
+                <span>Certs</span>
+              </button>
+            )}
+            {isAdmin && (
+              <button className={`nav-btn ${tab === "staff" ? "active" : ""}`} onClick={() => setTab("staff")}>
+                <Users size={20} strokeWidth={tab === "staff" ? 2.4 : 2} />
+                <span>Staff</span>
+              </button>
+            )}
           </div>
         )}
       </div>
