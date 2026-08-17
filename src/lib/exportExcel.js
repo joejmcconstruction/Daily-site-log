@@ -21,14 +21,24 @@ const KEY_SEP = "|||";
 const FUEL_PRICE_PER_LITRE = 1.44; // EUR — from an EUR1440/1000L delivery, ~Aug 2026. Update here when fuel is repriced.
 const LABOUR_RATE_PER_HOUR = 30; // EUR/hour per man
 
-// Tank capacity (litres) per machine — only what Joe has given so far.
-// ASSUMPTION (flagged for Joe): he said "Hitachi 135" — no exact match in
-// MACHINE_OPTIONS, so this is mapped to "13T Hitachi" (a ~13T-class Hitachi,
-// closest fit to a "135" model designation). Confirm this is correct.
-// Remaining machines are left blank in the Rates sheet for Joe to fill in.
+// Tank capacity (litres) per machine. The first two are Joe's own figures
+// (kept exactly as given); the rest were looked up online on 2026-08-17
+// since he asked for a best-effort fill-in of the remaining machines to
+// check over, rather than leaving them blank. Sources/confidence noted per
+// machine — anything marked ASSUMPTION/AVERAGE is a judgment call (no exact
+// spec found, or the model name in the app is ambiguous) and should be
+// confirmed against the actual machine, not treated as verified.
 const KNOWN_TANK_CAPACITY_L = {
-  "13T Hitachi": 220, // ASSUMPTION: Joe said "Hitachi 135" — confirm this is the right machine
-  Kubota: 115, // Joe said "Kubota 8.5T" — only one Kubota in the list, assumed same machine
+  "13T Hitachi": 220, // Joe's own figure (he said "Hitachi 135")
+  Kubota: 115, // Joe's own figure (he said "Kubota 8.5T")
+  "Hitachi 225": 270, // Hitachi ZX225US spec sheet (~71.4 US gal) — confirm this is the right ZX225 variant
+  "Kobelco 140": 271, // Kobelco SK140 spec sheet — confirm
+  "Wacker Neuson Excavator": 35, // ASSUMPTION/AVERAGE: no model number given in the app for this one, so no exact spec exists to look up — estimated for a small ~1.5-3T class excavator. Tell me the actual model and I'll correct this.
+  "Yanmar 0.8T": 10, // ASSUMPTION/AVERAGE: no published tank spec found for this micro-class excavator — averaged from comparable sub-1T machines (e.g. Bobcat E10 below)
+  "Bobcat 1T": 16, // Bobcat E10 spec sheet (4.2 US gal) — confirm
+  "10T Thwaites Dumper": 72, // Thwaites MACH692 (10T) spec sheet — confirm
+  "6T Thwaites Dumper": 70, // Thwaites 6T range spec sheet — confirm
+  "Wacker Plate": 5, // ASSUMPTION/AVERAGE: diesel reversible plate compactors in this size range (e.g. DPU5545He) run ~5L — confirm which plate model this is
 };
 
 const REPORT_HEADER = [
@@ -387,8 +397,7 @@ function buildDashboardSheet(wb, reports, machineHours, reportById) {
     "Regenerated automatically every time a report is submitted or deleted — always current with live data. Charts are pictures, redrawn on every regeneration, not native Excel charts reactive to manual cell edits.",
     "Fuel rule: a machine run 6 hrs/day uses 1.2x its tank capacity -> 0.2x tank per hour, at the price on the Rates sheet.",
     "Labour rate is on the Rates sheet. \"Labour hours\" on a report is everyone's gross total for the day — that report's machine hours are automatically subtracted before it's costed as ground labour, so a driver's hours aren't paid twice (e.g. 7.75hrs entered, 6hrs driving -> 1.75hrs costed as ground labour).",
-    '"13T Hitachi" tank capacity (220L) is an assumed match for a machine Joe called "Hitachi 135" — confirm this is correct.',
-    "Tank capacities for the remaining machines are blank on the Rates sheet until filled in — those machines show €0 fuel cost.",
+    'Machine tank capacities on the Rates sheet: "13T Hitachi" and Kubota are Joe\'s own figures; the rest were looked up online on 2026-08-17. Several are marked ASSUMPTION/AVERAGE in code comments (src/lib/exportExcel.js) where no exact spec was found or the model name was ambiguous — check those against the real machines and let me know any corrections.',
   ];
   notes.forEach((note, i) => {
     const row = notesStartRow + 1 + i;
