@@ -33,7 +33,7 @@ const KNOWN_TANK_CAPACITY_L = {
   Kubota: 115, // Joe's own figure (he said "Kubota 8.5T")
   "Hitachi 225": 270, // Hitachi ZX225US spec sheet (~71.4 US gal) — confirm this is the right ZX225 variant
   "Kobelco 140": 271, // Kobelco SK140 spec sheet — confirm
-  "Wacker Neuson Excavator": 44, // Joe confirmed ~3.5T -> Wacker Neuson EZ36/ET35 class spec sheet (11.62 US gal)
+  "Wacker Neuson Excavator": 35, // Joe confirmed EZ28 model — spec sheet (9.3 US gal)
   "Yanmar 0.8T": 10, // ASSUMPTION/AVERAGE: no published tank spec found for this micro-class excavator — averaged from comparable sub-1T machines (e.g. Bobcat E10 below)
   "Bobcat 1T": 16, // Bobcat E10 spec sheet (4.2 US gal) — confirm
   "10T Thwaites Dumper": 72, // Thwaites MACH692 (10T) spec sheet — confirm
