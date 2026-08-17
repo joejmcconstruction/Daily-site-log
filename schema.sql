@@ -387,3 +387,89 @@ with check (created_by = auth.uid());
 create policy "users delete own machine hours, admins delete all"
 on public.machine_hours for delete to authenticated
 using (created_by = auth.uid() or public.is_admin());
+
+-- ============================================================
+-- Email alerts: certs/training expiring within 5 days
+-- ============================================================
+-- Runs entirely in Postgres (no Edge Function to deploy) — pg_cron fires a
+-- daily check, pg_net sends the HTTP request, Resend delivers the email.
+-- The Resend API key lives in Supabase Vault (encrypted), not in app code.
+-- Only sends when something is actually expired or due within 5 days —
+-- silent otherwise. Note: it re-sends every day an item stays overdue,
+-- there's no "already notified" de-dup yet.
+
+create extension if not exists pg_cron;
+create extension if not exists pg_net with schema extensions;
+
+-- Run this once with your real key before scheduling the job below:
+-- select vault.create_secret('re_your_real_key_here', 'resend_api_key', 'Resend API key for expiry alerts');
+
+create or replace function public.notify_expiring_certs_and_training()
+returns void
+language plpgsql
+security definer
+as $$
+declare
+  api_key text;
+  admin_email text;
+  body_html text;
+  cert_rows text;
+  training_rows text;
+begin
+  select decrypted_secret into api_key from vault.decrypted_secrets where name = 'resend_api_key';
+  if api_key is null then
+    raise notice 'notify_expiring_certs_and_training: resend_api_key not set in vault, skipping';
+    return;
+  end if;
+
+  select coalesce(string_agg(
+    format('<li><b>%s</b> — %s (%s) expires %s</li>', subject_name, cert_type, category, expiry_date),
+    ''
+  ), '') into cert_rows
+  from public.compliance_certs
+  where expiry_date <= current_date + 5;
+
+  select coalesce(string_agg(
+    format('<li><b>%s</b> — %s expires %s</li>', e.full_name, t.training_name, t.expiry_date),
+    ''
+  ), '') into training_rows
+  from public.employee_training t
+  join public.employees e on e.id = t.employee_id
+  where t.expiry_date is not null and t.expiry_date <= current_date + 5;
+
+  if cert_rows = '' and training_rows = '' then
+    return;
+  end if;
+
+  body_html := '<h2>Certs / training expiring within 5 days</h2>';
+  if cert_rows <> '' then
+    body_html := body_html || '<h3>Certs</h3><ul>' || cert_rows || '</ul>';
+  end if;
+  if training_rows <> '' then
+    body_html := body_html || '<h3>Training</h3><ul>' || training_rows || '</ul>';
+  end if;
+
+  for admin_email in
+    select u.email from public.admin_users a join auth.users u on u.id = a.user_id
+  loop
+    perform net.http_post(
+      url := 'https://api.resend.com/emails',
+      headers := jsonb_build_object('Authorization', 'Bearer ' || api_key, 'Content-Type', 'application/json'),
+      body := jsonb_build_object(
+        'from', 'JMC Site Alerts <onboarding@resend.dev>',
+        'to', admin_email,
+        'subject', 'Certs/training expiring soon',
+        'html', body_html
+      )
+    );
+  end loop;
+end;
+$$;
+
+-- Runs every day at 07:00 UTC. Adjust the cron expression if you want a
+-- different time (Ireland is UTC or UTC+1 depending on daylight saving).
+select cron.schedule(
+  'daily-expiry-check',
+  '0 7 * * *',
+  $$select public.notify_expiring_certs_and_training();$$
+);
