@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Check, AlertCircle, Loader2, Plus, Paperclip, Wrench, Truck } from "lucide-react";
+import { Check, AlertCircle, Loader2, Plus, Paperclip, Wrench, Truck, Trash2 } from "lucide-react";
 import { supabase } from "../../supabaseClient";
 import { MACHINE_OPTIONS, uid } from "../../lib/helpers";
 import { VEHICLE_CERT_TYPES, expiryStatus, EXPIRY_STATUS_LABEL } from "../../lib/adminHelpers";
@@ -164,7 +164,7 @@ export default function CertsPage() {
               </div>
             )}
             {sectionCerts.map((row) => (
-              <CertRow key={row.id} row={row} onGetFileUrl={fileUrlFor} />
+              <CertRow key={row.id} row={row} onGetFileUrl={fileUrlFor} onDeleted={load} />
             ))}
           </div>
 
@@ -284,8 +284,9 @@ export default function CertsPage() {
   );
 }
 
-function CertRow({ row, onGetFileUrl }) {
+function CertRow({ row, onGetFileUrl, onDeleted }) {
   const [fileUrl, setFileUrl] = useState(null);
+  const [deleting, setDeleting] = useState(false);
   const status = expiryStatus(row.expiry_date);
 
   async function openFile() {
@@ -300,6 +301,23 @@ function CertRow({ row, onGetFileUrl }) {
     }
   }
 
+  async function handleDelete() {
+    if (!window.confirm(`Delete the ${row.cert_type} cert for "${row.subject_name}"? This can't be undone.`)) return;
+    setDeleting(true);
+    try {
+      if (row.file_path) {
+        await supabase.storage.from("admin-documents").remove([row.file_path]);
+      }
+      const { error } = await supabase.from("compliance_certs").delete().eq("id", row.id);
+      if (error) throw error;
+      onDeleted();
+    } catch (err) {
+      console.error(err);
+      window.alert(err.message || "Something went wrong deleting this cert.");
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="record-row">
       <div className="record-row-top">
@@ -309,11 +327,21 @@ function CertRow({ row, onGetFileUrl }) {
       <div className="record-row-sub">{row.cert_type}</div>
       <div className="record-row-meta">
         <span>Expires {row.expiry_date}</span>
-        {row.file_path && (
-          <button type="button" className="record-file-link" onClick={openFile} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
-            <Paperclip size={11} /> {row.file_name || "File"}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {row.file_path && (
+            <button type="button" className="record-file-link" onClick={openFile} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+              <Paperclip size={11} /> {row.file_name || "File"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={deleting}
+            style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "var(--danger)", display: "flex", alignItems: "center", gap: 4 }}
+          >
+            {deleting ? <Loader2 size={12} className="spin" /> : <Trash2 size={12} />} Delete
           </button>
-        )}
+        </div>
       </div>
       {row.notes && <div className="record-row-sub">{row.notes}</div>}
     </div>
