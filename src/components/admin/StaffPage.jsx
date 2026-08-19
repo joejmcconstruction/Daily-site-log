@@ -561,11 +561,16 @@ function AddTrainingInline({ employeeId, onSaved }) {
 }
 
 function HolidaysSection({ employees, holidays, employeeById, onSaved }) {
+  const [expanded, setExpanded] = useState({});
   const [form, setForm] = useState({ employee_id: "", start_date: "", end_date: "", notes: "" });
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [submitError, setSubmitError] = useState("");
+
+  function toggleExpand(id) {
+    setExpanded((e) => ({ ...e, [id]: !e[id] }));
+  }
 
   function setField(key, value) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -647,14 +652,42 @@ function HolidaysSection({ employees, holidays, employeeById, onSaved }) {
         {employees.map((emp) => {
           const taken = takenByEmployee[emp.id] || 0;
           const remaining = (Number(emp.annual_holiday_allowance) || 0) - taken;
+          const isOpen = !!expanded[emp.id];
+          const empUpcoming = upcoming.filter((h) => h.employee_id === emp.id);
           return (
             <div className="record-row" key={emp.id}>
-              <div className="record-row-top">
-                <div className="record-row-title">{emp.full_name}</div>
-                <span className="record-row-sub">
-                  {taken} taken · {remaining} remaining
-                </span>
-              </div>
+              <button
+                type="button"
+                onClick={() => toggleExpand(emp.id)}
+                style={{ background: "none", border: "none", padding: 0, width: "100%", textAlign: "left", cursor: "pointer", color: "inherit" }}
+              >
+                <div className="record-row-top">
+                  <div className="record-row-title">{emp.full_name}</div>
+                  <span className="record-row-sub" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    {taken} taken · {remaining} remaining
+                    {isOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                  </span>
+                </div>
+              </button>
+
+              {isOpen && (
+                <div style={{ marginTop: 4, paddingTop: 10, borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 10 }}>
+                  {empUpcoming.length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <div className="record-row-sub" style={{ fontWeight: 600 }}>
+                        Upcoming
+                      </div>
+                      {empUpcoming.map((h) => (
+                        <div className="record-row-sub" key={h.id}>
+                          {h.start_date} — {h.end_date} ({dayCount(h.start_date, h.end_date)} days){h.notes ? ` · ${h.notes}` : ""}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <RemainingDaysEditor employee={emp} taken={taken} remaining={remaining} onSaved={onSaved} />
+                  <AddHolidayInline employeeId={emp.id} onSaved={onSaved} />
+                </div>
+              )}
             </div>
           );
         })}
@@ -745,6 +778,187 @@ function HolidaysSection({ employees, holidays, employeeById, onSaved }) {
         {submitting ? <Loader2 size={17} className="spin" /> : <Plus size={17} />}
         {submitting ? "Saving..." : "Add holiday"}
       </button>
+    </div>
+  );
+}
+
+function RemainingDaysEditor({ employee, taken, remaining, onSaved }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(String(remaining));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setValue(String(remaining));
+  }, [remaining]);
+
+  async function handleSave() {
+    const parsed = Number(value);
+    if (Number.isNaN(parsed)) {
+      setError("Enter a number");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const { error: updateError } = await supabase
+        .from("employees")
+        .update({ annual_holiday_allowance: parsed + taken })
+        .eq("id", employee.id);
+      if (updateError) throw updateError;
+      setEditing(false);
+      onSaved();
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Something went wrong.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        className="btn-secondary"
+        onClick={() => setEditing(true)}
+        style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 6 }}
+      >
+        <Pencil size={14} /> Edit days remaining
+      </button>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {error && (
+        <div className="banner error" style={{ marginBottom: 0 }}>
+          <AlertCircle size={16} color="var(--danger)" />
+          <span>{error}</span>
+        </div>
+      )}
+      <div className="field" style={{ marginBottom: 0, maxWidth: 160 }}>
+        <label className="label">Days remaining</label>
+        <input className="input" type="number" step="1" value={value} onChange={(e) => setValue(e.target.value)} />
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() => {
+            setEditing(false);
+            setValue(String(remaining));
+            setError("");
+          }}
+          disabled={saving}
+        >
+          Cancel
+        </button>
+        <button type="button" className="btn-primary" onClick={handleSave} disabled={saving}>
+          {saving ? <Loader2 size={17} className="spin" /> : <Check size={17} />}
+          {saving ? "Saving..." : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AddHolidayInline({ employeeId, onSaved }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ start_date: "", end_date: "", notes: "" });
+  const [errors, setErrors] = useState({});
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+
+  function setField(key, value) {
+    setForm((f) => ({ ...f, [key]: value }));
+    if (errors[key]) setErrors((e) => ({ ...e, [key]: false }));
+  }
+
+  async function handleSubmit() {
+    setSubmitError("");
+    const newErrors = {};
+    if (!form.start_date) newErrors.start_date = true;
+    if (!form.end_date) newErrors.end_date = true;
+    if (form.start_date && form.end_date && form.end_date < form.start_date) newErrors.end_date = true;
+    setErrors(newErrors);
+    if (Object.keys(newErrors).length > 0) return;
+
+    setSubmitting(true);
+    try {
+      const { error: insertError } = await supabase.from("employee_holidays").insert({
+        employee_id: employeeId,
+        start_date: form.start_date,
+        end_date: form.end_date,
+        notes: form.notes.trim() || null,
+      });
+      if (insertError) throw insertError;
+      setForm({ start_date: "", end_date: "", notes: "" });
+      setOpen(false);
+      onSaved();
+    } catch (err) {
+      console.error(err);
+      setSubmitError(err.message || "Something went wrong saving this holiday.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button type="button" className="btn-secondary" onClick={() => setOpen(true)} style={{ alignSelf: "flex-start" }}>
+        <Plus size={15} /> Add upcoming holiday
+      </button>
+    );
+  }
+
+  return (
+    <div className="card" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {submitError && (
+        <div className="banner error" style={{ marginBottom: 0 }}>
+          <AlertCircle size={16} color="var(--danger)" />
+          <span>{submitError}</span>
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 10 }}>
+        <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+          <label className="label">
+            Start date <span className="req">*</span>
+          </label>
+          <input
+            className={`input ${errors.start_date ? "error" : ""}`}
+            type="date"
+            value={form.start_date}
+            onChange={(e) => setField("start_date", e.target.value)}
+          />
+          {errors.start_date && <div className="hint error">Required</div>}
+        </div>
+        <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+          <label className="label">
+            End date <span className="req">*</span>
+          </label>
+          <input
+            className={`input ${errors.end_date ? "error" : ""}`}
+            type="date"
+            value={form.end_date}
+            onChange={(e) => setField("end_date", e.target.value)}
+          />
+          {errors.end_date && <div className="hint error">Must be on or after start date</div>}
+        </div>
+      </div>
+      <div className="field" style={{ marginBottom: 0 }}>
+        <label className="label">Notes</label>
+        <textarea className="input" rows={2} value={form.notes} onChange={(e) => setField("notes", e.target.value)} />
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <button type="button" className="btn-secondary" onClick={() => setOpen(false)} disabled={submitting}>
+          Cancel
+        </button>
+        <button type="button" className="btn-primary" onClick={handleSubmit} disabled={submitting}>
+          {submitting ? <Loader2 size={17} className="spin" /> : <Plus size={17} />}
+          {submitting ? "Saving..." : "Save"}
+        </button>
+      </div>
     </div>
   );
 }
