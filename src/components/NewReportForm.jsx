@@ -6,6 +6,7 @@ import { syncExcelExport } from "../lib/exportExcel";
 import FileUpload from "./FileUpload";
 
 const emptyForm = () => ({
+  report_date: dateKey(new Date()),
   project_name: "",
   weather: "",
   staff_on_site: "",
@@ -64,6 +65,7 @@ export default function NewReportForm({ onSubmitted }) {
 
   function validate() {
     const req = {
+      report_date: form.report_date,
       project_name: form.project_name,
       weather: form.weather,
       staff_on_site: form.staff_on_site,
@@ -121,7 +123,7 @@ export default function NewReportForm({ onSubmitted }) {
     setSubmitting(true);
     try {
       const { data: userData } = await supabase.auth.getUser();
-      const reportDate = dateKey(new Date());
+      const reportDate = form.report_date;
       const payload = {
         report_date: reportDate,
         project_name: form.project_name,
@@ -208,6 +210,20 @@ export default function NewReportForm({ onSubmitted }) {
       )}
 
       <div className="eyebrow" style={{ marginTop: 0 }}>Project</div>
+      <div className="field">
+        <label className="label">
+          Report date <span className="req">*</span>
+        </label>
+        <input
+          className={`input ${errors.report_date ? "error" : ""}`}
+          type="date"
+          max={dateKey(new Date())}
+          value={form.report_date}
+          onChange={(e) => setField("report_date", e.target.value)}
+        />
+        <div className="hint">Defaults to today — change this to back-log a report for an earlier day.</div>
+        {errors.report_date && <div className="hint error">Report date is required</div>}
+      </div>
       <div className="field">
         <label className="label">
           Which project is this report for? <span className="req">*</span>
