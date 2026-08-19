@@ -243,6 +243,7 @@ create table public.employees (
   role text,
   start_date date,
   annual_holiday_allowance numeric not null default 20,
+  manual_days_taken numeric, -- override for days taken this year; null = use days summed from employee_holidays
   notes text
 );
 
@@ -484,3 +485,8 @@ alter table public.reports add column if not exists eir_duct_32mm numeric;
 -- Add vehicle model to compliance_certs (Road Vehicles cert dropdown)
 -- ============================================================
 alter table public.compliance_certs add column if not exists vehicle_model text;
+
+-- ============================================================
+-- Add manual days-taken override to employees (Holidays tab)
+-- ============================================================
+alter table public.employees add column if not exists manual_days_taken numeric;

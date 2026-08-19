@@ -650,7 +650,8 @@ function HolidaysSection({ employees, holidays, employeeById, onSaved }) {
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
         {employees.map((emp) => {
-          const taken = takenByEmployee[emp.id] || 0;
+          const bookedTaken = takenByEmployee[emp.id] || 0;
+          const taken = emp.manual_days_taken != null ? Number(emp.manual_days_taken) : bookedTaken;
           const remaining = (Number(emp.annual_holiday_allowance) || 0) - taken;
           const isOpen = !!expanded[emp.id];
           const empUpcoming = upcoming.filter((h) => h.employee_id === emp.id);
@@ -684,7 +685,7 @@ function HolidaysSection({ employees, holidays, employeeById, onSaved }) {
                       ))}
                     </div>
                   )}
-                  <RemainingDaysEditor employee={emp} taken={taken} remaining={remaining} onSaved={onSaved} />
+                  <AllowanceEditor employee={emp} taken={taken} remaining={remaining} onSaved={onSaved} />
                   <AddHolidayInline employeeId={emp.id} onSaved={onSaved} />
                 </div>
               )}
@@ -782,20 +783,23 @@ function HolidaysSection({ employees, holidays, employeeById, onSaved }) {
   );
 }
 
-function RemainingDaysEditor({ employee, taken, remaining, onSaved }) {
+function AllowanceEditor({ employee, taken, remaining, onSaved }) {
   const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(String(remaining));
+  const [takenValue, setTakenValue] = useState(String(taken));
+  const [remainingValue, setRemainingValue] = useState(String(remaining));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    setValue(String(remaining));
-  }, [remaining]);
+    setTakenValue(String(taken));
+    setRemainingValue(String(remaining));
+  }, [taken, remaining]);
 
   async function handleSave() {
-    const parsed = Number(value);
-    if (Number.isNaN(parsed)) {
-      setError("Enter a number");
+    const parsedTaken = Number(takenValue);
+    const parsedRemaining = Number(remainingValue);
+    if (Number.isNaN(parsedTaken) || Number.isNaN(parsedRemaining)) {
+      setError("Enter numbers for both fields");
       return;
     }
     setSaving(true);
@@ -803,7 +807,10 @@ function RemainingDaysEditor({ employee, taken, remaining, onSaved }) {
     try {
       const { error: updateError } = await supabase
         .from("employees")
-        .update({ annual_holiday_allowance: parsed + taken })
+        .update({
+          manual_days_taken: parsedTaken,
+          annual_holiday_allowance: parsedTaken + parsedRemaining,
+        })
         .eq("id", employee.id);
       if (updateError) throw updateError;
       setEditing(false);
@@ -824,7 +831,7 @@ function RemainingDaysEditor({ employee, taken, remaining, onSaved }) {
         onClick={() => setEditing(true)}
         style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 6 }}
       >
-        <Pencil size={14} /> Edit days remaining
+        <Pencil size={14} /> Edit days taken / remaining
       </button>
     );
   }
@@ -837,9 +844,15 @@ function RemainingDaysEditor({ employee, taken, remaining, onSaved }) {
           <span>{error}</span>
         </div>
       )}
-      <div className="field" style={{ marginBottom: 0, maxWidth: 160 }}>
-        <label className="label">Days remaining</label>
-        <input className="input" type="number" step="1" value={value} onChange={(e) => setValue(e.target.value)} />
+      <div style={{ display: "flex", gap: 10 }}>
+        <div className="field" style={{ marginBottom: 0, maxWidth: 160 }}>
+          <label className="label">Days taken</label>
+          <input className="input" type="number" step="1" value={takenValue} onChange={(e) => setTakenValue(e.target.value)} />
+        </div>
+        <div className="field" style={{ marginBottom: 0, maxWidth: 160 }}>
+          <label className="label">Days remaining</label>
+          <input className="input" type="number" step="1" value={remainingValue} onChange={(e) => setRemainingValue(e.target.value)} />
+        </div>
       </div>
       <div style={{ display: "flex", gap: 10 }}>
         <button
@@ -847,7 +860,8 @@ function RemainingDaysEditor({ employee, taken, remaining, onSaved }) {
           className="btn-secondary"
           onClick={() => {
             setEditing(false);
-            setValue(String(remaining));
+            setTakenValue(String(taken));
+            setRemainingValue(String(remaining));
             setError("");
           }}
           disabled={saving}
