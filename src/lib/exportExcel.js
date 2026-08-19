@@ -50,10 +50,12 @@ const REPORT_HEADER = [
   "Trench excavated (m)",
   "Trench backfilled (m)",
   'ESB 5" duct (m)',
-  "ESB 50mm duct",
+  "ESB 50mm duct (m)",
   "Public lighting duct (m)",
   "Virgin duct (m)",
+  "Virgin duct 32mm (m)",
   "Eir duct (m)",
+  "Eir duct 32mm (m)",
   "Siro duct (m)",
   "EV charger duct (m)",
   "Chambers fitted",
@@ -61,7 +63,7 @@ const REPORT_HEADER = [
   "Cause of delays",
   "Additional work",
 ];
-const REPORT_COL_WIDTHS = [12, 18, 12, 30, 12, 16, 16, 14, 14, 18, 14, 14, 14, 16, 14, 40, 30, 30];
+const REPORT_COL_WIDTHS = [12, 18, 12, 30, 12, 16, 16, 14, 14, 18, 14, 16, 14, 16, 14, 16, 14, 40, 30, 30];
 
 const MACHINE_HEADER = ["Date", "Project", "Machine", "Hours", "Driver"];
 const MACHINE_COL_WIDTHS = [12, 18, 24, 10, 20];
@@ -106,7 +108,9 @@ function buildReportsSheet(wb, reports) {
       r.esb_50mm ?? "",
       r.public_lighting ?? "",
       r.virgin_duct ?? "",
+      r.virgin_duct_32mm ?? "",
       r.eir_duct ?? "",
+      r.eir_duct_32mm ?? "",
       r.siro_duct ?? "",
       r.ev_charger_duct ?? "",
       r.chambers_fitted ?? "",

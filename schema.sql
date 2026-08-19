@@ -473,3 +473,9 @@ select cron.schedule(
   '0 7 * * *',
   $$select public.notify_expiring_certs_and_training();$$
 );
+
+-- ============================================================
+-- Add 32mm variants of virgin duct and Eir duct to reports
+-- ============================================================
+alter table public.reports add column if not exists virgin_duct_32mm numeric;
+alter table public.reports add column if not exists eir_duct_32mm numeric;
