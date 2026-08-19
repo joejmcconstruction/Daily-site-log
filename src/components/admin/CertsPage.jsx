@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Check, AlertCircle, Loader2, Plus, Paperclip, Wrench, Truck, Trash2 } from "lucide-react";
+import { Check, AlertCircle, Loader2, Plus, Paperclip, Wrench, Truck, Trash2, Pencil } from "lucide-react";
 import { supabase } from "../../supabaseClient";
 import { MACHINE_OPTIONS, VEHICLE_MODEL_OPTIONS, uid } from "../../lib/helpers";
 import { VEHICLE_CERT_TYPES, expiryStatus, EXPIRY_STATUS_LABEL } from "../../lib/adminHelpers";
@@ -167,7 +167,7 @@ export default function CertsPage() {
               </div>
             )}
             {sectionCerts.map((row) => (
-              <CertRow key={row.id} row={row} onGetFileUrl={fileUrlFor} onDeleted={load} />
+              <CertRow key={row.id} row={row} onGetFileUrl={fileUrlFor} onChanged={load} />
             ))}
           </div>
 
@@ -308,9 +308,10 @@ export default function CertsPage() {
   );
 }
 
-function CertRow({ row, onGetFileUrl, onDeleted }) {
+function CertRow({ row, onGetFileUrl, onChanged }) {
   const [fileUrl, setFileUrl] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [editing, setEditing] = useState(false);
   const status = expiryStatus(row.expiry_date);
 
   async function openFile() {
@@ -334,12 +335,26 @@ function CertRow({ row, onGetFileUrl, onDeleted }) {
       }
       const { error } = await supabase.from("compliance_certs").delete().eq("id", row.id);
       if (error) throw error;
-      onDeleted();
+      onChanged();
     } catch (err) {
       console.error(err);
       window.alert(err.message || "Something went wrong deleting this cert.");
       setDeleting(false);
     }
+  }
+
+  if (editing) {
+    return (
+      <CertRowEditForm
+        row={row}
+        onCancel={() => setEditing(false)}
+        onSaved={() => {
+          setEditing(false);
+          setFileUrl(null);
+          onChanged();
+        }}
+      />
+    );
   }
 
   return (
@@ -359,6 +374,13 @@ function CertRow({ row, onGetFileUrl, onDeleted }) {
           )}
           <button
             type="button"
+            onClick={() => setEditing(true)}
+            style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "var(--accent)", display: "flex", alignItems: "center", gap: 4 }}
+          >
+            <Pencil size={12} /> Edit
+          </button>
+          <button
+            type="button"
             onClick={handleDelete}
             disabled={deleting}
             style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "var(--danger)", display: "flex", alignItems: "center", gap: 4 }}
@@ -368,6 +390,220 @@ function CertRow({ row, onGetFileUrl, onDeleted }) {
         </div>
       </div>
       {row.notes && <div className="record-row-sub">{row.notes}</div>}
+    </div>
+  );
+}
+
+function CertRowEditForm({ row, onCancel, onSaved }) {
+  const isVehicle = row.category === "vehicle";
+  const knownType = isVehicle ? VEHICLE_CERT_TYPES.includes(row.cert_type) : true;
+  const [form, setForm] = useState({
+    subject_name: row.subject_name || "",
+    vehicle_model: row.vehicle_model || "",
+    cert_type: isVehicle ? (knownType ? row.cert_type : "Other") : row.cert_type || "",
+    cert_type_other: isVehicle && !knownType ? row.cert_type : "",
+    issue_date: row.issue_date || "",
+    expiry_date: row.expiry_date || "",
+    notes: row.notes || "",
+  });
+  const [file, setFile] = useState(null);
+  const [errors, setErrors] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+
+  function setField(key, value) {
+    setForm((f) => ({ ...f, [key]: value }));
+    if (errors[key]) setErrors((e) => ({ ...e, [key]: false }));
+  }
+
+  async function handleSave() {
+    const newErrors = {};
+    if (!form.subject_name.trim()) newErrors.subject_name = true;
+    if (isVehicle && !form.vehicle_model) newErrors.vehicle_model = true;
+    if (!form.cert_type) newErrors.cert_type = true;
+    if (isVehicle && form.cert_type === "Other" && !form.cert_type_other.trim()) newErrors.cert_type_other = true;
+    if (!form.expiry_date) newErrors.expiry_date = true;
+    setErrors(newErrors);
+    if (Object.keys(newErrors).length > 0) return;
+
+    setSaving(true);
+    setSaveError("");
+    try {
+      let filePath = row.file_path;
+      let fileName = row.file_name;
+      if (file) {
+        const ext = file.name.split(".").pop();
+        const newPath = `certs/${uid()}.${ext}`;
+        const { error: uploadError } = await supabase.storage.from("admin-documents").upload(newPath, file.file, {
+          contentType: file.type,
+          upsert: false,
+        });
+        if (uploadError) throw uploadError;
+        if (row.file_path) {
+          await supabase.storage.from("admin-documents").remove([row.file_path]);
+        }
+        filePath = newPath;
+        fileName = file.name;
+      }
+
+      const payload = {
+        subject_name: form.subject_name.trim(),
+        vehicle_model: isVehicle ? form.vehicle_model : null,
+        cert_type: isVehicle && form.cert_type === "Other" ? form.cert_type_other.trim() : form.cert_type,
+        issue_date: form.issue_date || null,
+        expiry_date: form.expiry_date,
+        notes: form.notes.trim() || null,
+        file_path: filePath,
+        file_name: fileName,
+      };
+
+      const { error } = await supabase.from("compliance_certs").update(payload).eq("id", row.id);
+      if (error) throw error;
+      onSaved();
+    } catch (err) {
+      console.error(err);
+      setSaveError(err.message || "Something went wrong saving changes.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {saveError && (
+        <div className="banner error" style={{ marginBottom: 0 }}>
+          <AlertCircle size={16} color="var(--danger)" />
+          <span>{saveError}</span>
+        </div>
+      )}
+
+      <div className="field" style={{ marginBottom: 0 }}>
+        <label className="label">
+          {isVehicle ? "Vehicle registration" : "Machine"} <span className="req">*</span>
+        </label>
+        {isVehicle ? (
+          <input
+            className={`input ${errors.subject_name ? "error" : ""}`}
+            type="text"
+            value={form.subject_name}
+            onChange={(e) => setField("subject_name", e.target.value)}
+          />
+        ) : (
+          <select
+            className={`input ${errors.subject_name ? "error" : ""}`}
+            value={form.subject_name}
+            onChange={(e) => setField("subject_name", e.target.value)}
+          >
+            <option value="">Select machine...</option>
+            {MACHINE_OPTIONS.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        )}
+        {errors.subject_name && <div className="hint error">Required</div>}
+      </div>
+
+      {isVehicle && (
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label className="label">
+            Vehicle model <span className="req">*</span>
+          </label>
+          <select
+            className={`input ${errors.vehicle_model ? "error" : ""}`}
+            value={form.vehicle_model}
+            onChange={(e) => setField("vehicle_model", e.target.value)}
+          >
+            <option value="">Select model...</option>
+            {VEHICLE_MODEL_OPTIONS.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+          {errors.vehicle_model && <div className="hint error">Required</div>}
+        </div>
+      )}
+
+      <div className="field" style={{ marginBottom: 0 }}>
+        <label className="label">
+          Cert type <span className="req">*</span>
+        </label>
+        {isVehicle ? (
+          <select className={`input ${errors.cert_type ? "error" : ""}`} value={form.cert_type} onChange={(e) => setField("cert_type", e.target.value)}>
+            <option value="">Select type...</option>
+            {VEHICLE_CERT_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+            <option value="Other">Other</option>
+          </select>
+        ) : (
+          <input
+            className={`input ${errors.cert_type ? "error" : ""}`}
+            type="text"
+            value={form.cert_type}
+            onChange={(e) => setField("cert_type", e.target.value)}
+          />
+        )}
+        {errors.cert_type && <div className="hint error">Required</div>}
+      </div>
+
+      {isVehicle && form.cert_type === "Other" && (
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label className="label">
+            Custom cert type <span className="req">*</span>
+          </label>
+          <input
+            className={`input ${errors.cert_type_other ? "error" : ""}`}
+            type="text"
+            value={form.cert_type_other}
+            onChange={(e) => setField("cert_type_other", e.target.value)}
+          />
+          {errors.cert_type_other && <div className="hint error">Required</div>}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+          <label className="label">Date obtained</label>
+          <input className="input" type="date" value={form.issue_date} onChange={(e) => setField("issue_date", e.target.value)} />
+        </div>
+        <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+          <label className="label">
+            Expiry date <span className="req">*</span>
+          </label>
+          <input
+            className={`input ${errors.expiry_date ? "error" : ""}`}
+            type="date"
+            value={form.expiry_date}
+            onChange={(e) => setField("expiry_date", e.target.value)}
+          />
+          {errors.expiry_date && <div className="hint error">Required</div>}
+        </div>
+      </div>
+
+      <div className="field" style={{ marginBottom: 0 }}>
+        <label className="label">Notes</label>
+        <textarea className="input" rows={2} value={form.notes} onChange={(e) => setField("notes", e.target.value)} />
+      </div>
+
+      <div className="field" style={{ marginBottom: 0 }}>
+        <label className="label">Replace cert photo / file {row.file_name && <span style={{ fontWeight: 400 }}>(currently: {row.file_name})</span>}</label>
+        <AdminFileUpload value={file} onChange={setFile} label="Upload a new file to replace it" />
+      </div>
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <button type="button" className="btn-secondary" onClick={onCancel} disabled={saving}>
+          Cancel
+        </button>
+        <button type="button" className="btn-primary" onClick={handleSave} disabled={saving}>
+          {saving ? <Loader2 size={17} className="spin" /> : <Check size={17} />}
+          {saving ? "Saving..." : "Save changes"}
+        </button>
+      </div>
     </div>
   );
 }

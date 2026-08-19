@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Check, AlertCircle, Loader2, Plus, Paperclip, GraduationCap, Sun, ChevronDown, ChevronUp, Trash2 } from "lucide-react";
+import { Check, AlertCircle, Loader2, Plus, Paperclip, GraduationCap, Sun, ChevronDown, ChevronUp, Trash2, Pencil } from "lucide-react";
 import { supabase } from "../../supabaseClient";
 import { uid } from "../../lib/helpers";
 import { expiryStatus, EXPIRY_STATUS_LABEL } from "../../lib/adminHelpers";
@@ -187,7 +187,7 @@ function StaffRecordsSection({ employees, trainings, onSaved }) {
                   {empTrainings.length === 0 ? (
                     <div className="record-row-sub">No certs or training records yet.</div>
                   ) : (
-                    empTrainings.map((row) => <EmployeeTrainingRow key={row.id} row={row} onDeleted={onSaved} />)
+                    empTrainings.map((row) => <EmployeeTrainingRow key={row.id} row={row} onChanged={onSaved} />)
                   )}
                   <AddTrainingInline employeeId={emp.id} onSaved={onSaved} />
                 </div>
@@ -243,9 +243,10 @@ function StaffRecordsSection({ employees, trainings, onSaved }) {
   );
 }
 
-function EmployeeTrainingRow({ row, onDeleted }) {
+function EmployeeTrainingRow({ row, onChanged }) {
   const [fileUrl, setFileUrl] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [editing, setEditing] = useState(false);
   const status = expiryStatus(row.expiry_date);
 
   async function openFile() {
@@ -270,12 +271,26 @@ function EmployeeTrainingRow({ row, onDeleted }) {
       }
       const { error } = await supabase.from("employee_training").delete().eq("id", row.id);
       if (error) throw error;
-      onDeleted();
+      onChanged();
     } catch (err) {
       console.error(err);
       window.alert(err.message || "Something went wrong deleting this record.");
       setDeleting(false);
     }
+  }
+
+  if (editing) {
+    return (
+      <TrainingRowEditForm
+        row={row}
+        onCancel={() => setEditing(false)}
+        onSaved={() => {
+          setEditing(false);
+          setFileUrl(null);
+          onChanged();
+        }}
+      />
+    );
   }
 
   return (
@@ -294,6 +309,13 @@ function EmployeeTrainingRow({ row, onDeleted }) {
           )}
           <button
             type="button"
+            onClick={() => setEditing(true)}
+            style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "var(--accent)", display: "flex", alignItems: "center", gap: 4 }}
+          >
+            <Pencil size={12} /> Edit
+          </button>
+          <button
+            type="button"
             onClick={handleDelete}
             disabled={deleting}
             style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "var(--danger)", display: "flex", alignItems: "center", gap: 4 }}
@@ -303,6 +325,120 @@ function EmployeeTrainingRow({ row, onDeleted }) {
         </div>
       </div>
       {row.notes && <div className="record-row-sub">{row.notes}</div>}
+    </div>
+  );
+}
+
+function TrainingRowEditForm({ row, onCancel, onSaved }) {
+  const [form, setForm] = useState({
+    training_name: row.training_name || "",
+    completed_date: row.completed_date || "",
+    expiry_date: row.expiry_date || "",
+    notes: row.notes || "",
+  });
+  const [file, setFile] = useState(null);
+  const [errors, setErrors] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+
+  function setField(key, value) {
+    setForm((f) => ({ ...f, [key]: value }));
+    if (errors[key]) setErrors((e) => ({ ...e, [key]: false }));
+  }
+
+  async function handleSave() {
+    if (!form.training_name.trim()) {
+      setErrors({ training_name: true });
+      return;
+    }
+    setSaving(true);
+    setSaveError("");
+    try {
+      let filePath = row.file_path;
+      let fileName = row.file_name;
+      if (file) {
+        const ext = file.name.split(".").pop();
+        const newPath = `training/${uid()}.${ext}`;
+        const { error: uploadError } = await supabase.storage.from("admin-documents").upload(newPath, file.file, {
+          contentType: file.type,
+          upsert: false,
+        });
+        if (uploadError) throw uploadError;
+        if (row.file_path) {
+          await supabase.storage.from("admin-documents").remove([row.file_path]);
+        }
+        filePath = newPath;
+        fileName = file.name;
+      }
+
+      const { error } = await supabase
+        .from("employee_training")
+        .update({
+          training_name: form.training_name.trim(),
+          completed_date: form.completed_date || null,
+          expiry_date: form.expiry_date || null,
+          notes: form.notes.trim() || null,
+          file_path: filePath,
+          file_name: fileName,
+        })
+        .eq("id", row.id);
+      if (error) throw error;
+      onSaved();
+    } catch (err) {
+      console.error(err);
+      setSaveError(err.message || "Something went wrong saving changes.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {saveError && (
+        <div className="banner error" style={{ marginBottom: 0 }}>
+          <AlertCircle size={16} color="var(--danger)" />
+          <span>{saveError}</span>
+        </div>
+      )}
+      <div className="field" style={{ marginBottom: 0 }}>
+        <label className="label">
+          Training / cert name <span className="req">*</span>
+        </label>
+        <input
+          className={`input ${errors.training_name ? "error" : ""}`}
+          type="text"
+          value={form.training_name}
+          onChange={(e) => setField("training_name", e.target.value)}
+        />
+        {errors.training_name && <div className="hint error">Required</div>}
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+          <label className="label">Date obtained</label>
+          <input className="input" type="date" value={form.completed_date} onChange={(e) => setField("completed_date", e.target.value)} />
+        </div>
+        <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+          <label className="label">Expiry date</label>
+          <input className="input" type="date" value={form.expiry_date} onChange={(e) => setField("expiry_date", e.target.value)} />
+        </div>
+      </div>
+      <div className="field" style={{ marginBottom: 0 }}>
+        <label className="label">Notes</label>
+        <textarea className="input" rows={2} value={form.notes} onChange={(e) => setField("notes", e.target.value)} />
+      </div>
+      <div className="field" style={{ marginBottom: 0 }}>
+        <label className="label">Replace cert photo / file {row.file_name && <span style={{ fontWeight: 400 }}>(currently: {row.file_name})</span>}</label>
+        <AdminFileUpload value={file} onChange={setFile} label="Upload a new file to replace it" />
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <button type="button" className="btn-secondary" onClick={onCancel} disabled={saving}>
+          Cancel
+        </button>
+        <button type="button" className="btn-primary" onClick={handleSave} disabled={saving}>
+          {saving ? <Loader2 size={17} className="spin" /> : <Check size={17} />}
+          {saving ? "Saving..." : "Save changes"}
+        </button>
+      </div>
     </div>
   );
 }
