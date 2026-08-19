@@ -479,3 +479,8 @@ select cron.schedule(
 -- ============================================================
 alter table public.reports add column if not exists virgin_duct_32mm numeric;
 alter table public.reports add column if not exists eir_duct_32mm numeric;
+
+-- ============================================================
+-- Add vehicle model to compliance_certs (Road Vehicles cert dropdown)
+-- ============================================================
+alter table public.compliance_certs add column if not exists vehicle_model text;

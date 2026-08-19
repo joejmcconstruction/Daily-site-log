@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { Check, AlertCircle, Loader2, Plus, Paperclip, Wrench, Truck, Trash2 } from "lucide-react";
 import { supabase } from "../../supabaseClient";
-import { MACHINE_OPTIONS, uid } from "../../lib/helpers";
+import { MACHINE_OPTIONS, VEHICLE_MODEL_OPTIONS, uid } from "../../lib/helpers";
 import { VEHICLE_CERT_TYPES, expiryStatus, EXPIRY_STATUS_LABEL } from "../../lib/adminHelpers";
 import AdminFileUpload from "./AdminFileUpload";
 
 const emptyForm = () => ({
   subject_name: "",
+  vehicle_model: "",
   cert_type: "",
   cert_type_other: "",
   issue_date: "",
@@ -52,6 +53,7 @@ export default function CertsPage() {
   function validate() {
     const errors = {};
     if (!form.subject_name.trim()) errors.subject_name = true;
+    if (section === "vehicle" && !form.vehicle_model) errors.vehicle_model = true;
     if (!form.cert_type) errors.cert_type = true;
     if (form.cert_type === "Other" && !form.cert_type_other.trim()) errors.cert_type_other = true;
     if (!form.expiry_date) errors.expiry_date = true;
@@ -81,6 +83,7 @@ export default function CertsPage() {
       const payload = {
         category: section,
         subject_name: form.subject_name.trim(),
+        vehicle_model: section === "vehicle" ? form.vehicle_model : null,
         cert_type: form.cert_type === "Other" ? form.cert_type_other.trim() : form.cert_type,
         issue_date: form.issue_date || null,
         expiry_date: form.expiry_date,
@@ -198,6 +201,27 @@ export default function CertsPage() {
             )}
             {formErrors.subject_name && <div className="hint error">Required</div>}
           </div>
+
+          {section === "vehicle" && (
+            <div className="field">
+              <label className="label">
+                Vehicle model <span className="req">*</span>
+              </label>
+              <select
+                className={`input ${formErrors.vehicle_model ? "error" : ""}`}
+                value={form.vehicle_model}
+                onChange={(e) => setField("vehicle_model", e.target.value)}
+              >
+                <option value="">Select model...</option>
+                {VEHICLE_MODEL_OPTIONS.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+              {formErrors.vehicle_model && <div className="hint error">Required</div>}
+            </div>
+          )}
 
           <div className="field">
             <label className="label">
@@ -324,7 +348,7 @@ function CertRow({ row, onGetFileUrl, onDeleted }) {
         <div className="record-row-title">{row.subject_name}</div>
         <span className={`status-badge status-${status}`}>{EXPIRY_STATUS_LABEL[status]}</span>
       </div>
-      <div className="record-row-sub">{row.cert_type}</div>
+      <div className="record-row-sub">{row.vehicle_model ? `${row.vehicle_model} · ${row.cert_type}` : row.cert_type}</div>
       <div className="record-row-meta">
         <span>Expires {row.expiry_date}</span>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>

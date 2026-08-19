@@ -32,6 +32,18 @@ export const MACHINE_OPTIONS = [
   "Wacker Plate",
 ];
 
+export const VEHICLE_MODEL_OPTIONS = [
+  "Berlingo",
+  "Caddy",
+  "Ranger",
+  "Volvo XC60",
+  "Tiguan",
+  "Ford Focus",
+  "Opel Movano",
+  "Fastrac",
+  "Ford Tipper",
+];
+
 export const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10MB per file
 export const MAX_FILES = 10;
 
