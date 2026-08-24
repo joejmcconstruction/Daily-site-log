@@ -22,8 +22,8 @@ import { dateKey, SITE_LOCATION } from "../lib/helpers";
 import logo from "../assets/logo.png";
 
 const METRICS = [
-  { key: "trench_excavated", label: "Trench excavated", unit: "m", icon: Layers, color: "var(--accent)", bg: "rgba(232, 98, 26, 0.16)" },
-  { key: "trench_backfilled", label: "Trench backfilled", unit: "m", icon: PackageCheck, color: "var(--accent-2)", bg: "rgba(240, 180, 41, 0.16)" },
+  { key: "trench_excavated", label: "Trench excavated", unit: "m", icon: Layers, color: "var(--accent)", bg: "rgba(22, 38, 77, 0.1)" },
+  { key: "trench_backfilled", label: "Trench backfilled", unit: "m", icon: PackageCheck, color: "var(--accent-2)", bg: "rgba(184, 134, 44, 0.14)" },
   { key: "chambers_fitted", label: "Chambers fitted", unit: "units", icon: Boxes, color: "var(--success)", bg: "rgba(76, 154, 106, 0.16)" },
 ];
 
