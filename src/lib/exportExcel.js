@@ -21,7 +21,7 @@ const KEY_SEP = "|||";
 // driving the 13T Hitachi -> 1.75hrs costed as ground labour for that report.
 const FUEL_PRICE_PER_LITRE = 1.44; // EUR — from an EUR1440/1000L delivery, ~Aug 2026. Update here when fuel is repriced.
 const FUEL_TANKS_PER_HOUR = 1 / 25; // a full tank lasts 25 hours of machine running time
-const LABOUR_RATE_PER_HOUR = 30; // EUR/hour per man
+const LABOUR_RATE_PER_HOUR = 35; // EUR/hour per man
 
 // Tank capacity (litres) per machine. The first two are Joe's own figures
 // (kept exactly as given); the rest were looked up online on 2026-08-17
