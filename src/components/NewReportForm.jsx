@@ -1,5 +1,5 @@
-import React, { useState, useRef } from "react";
-import { Check, AlertCircle, Loader2, Camera, Paperclip, Plus, X } from "lucide-react";
+import React, { useState, useRef, useEffect } from "react";
+import { Check, AlertCircle, Loader2, Camera, Paperclip, Plus, X, RotateCcw, FileText } from "lucide-react";
 import { supabase } from "../supabaseClient";
 import { WEATHER_OPTIONS, DUCT_FIELDS, PROJECT_OPTIONS, MACHINE_OPTIONS, dateKey, uid } from "../lib/helpers";
 import { syncExcelExport } from "../lib/exportExcel";
@@ -30,17 +30,71 @@ const emptyForm = () => ({
 
 const emptyMachineRow = () => ({ id: uid(), machine_name: "", hours: "", driver_name: "" });
 
-export default function NewReportForm({ onSubmitted }) {
+// Doubles as the edit form: pass editReportId and the same fields load from the
+// saved report and save back over it instead of creating a new one.
+export default function NewReportForm({ onSubmitted, editReportId = null, onSaved, onCancelEdit }) {
+  const isEdit = !!editReportId;
   const [form, setForm] = useState(emptyForm());
   const [machines, setMachines] = useState([]);
   const [supportingFiles, setSupportingFiles] = useState([]);
   const [workPhotos, setWorkPhotos] = useState([]);
+  const [existingFiles, setExistingFiles] = useState([]);
+  const [removedFileIds, setRemovedFileIds] = useState([]);
+  const [loadingReport, setLoadingReport] = useState(isEdit);
   const [errors, setErrors] = useState({});
   const [machineErrors, setMachineErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const topRef = useRef(null);
+
+  useEffect(() => {
+    if (!editReportId) return;
+    let cancelled = false;
+    (async () => {
+      setLoadingReport(true);
+      const { data: report, error: loadError } = await supabase.from("reports").select("*").eq("id", editReportId).single();
+      const { data: machineData } = await supabase.from("machine_hours").select("*").eq("report_id", editReportId);
+      const { data: fileData } = await supabase.from("report_files").select("*").eq("report_id", editReportId);
+      if (cancelled) return;
+      if (loadError || !report) {
+        setSubmitError(loadError?.message || "Couldn't load this report for editing.");
+        setLoadingReport(false);
+        return;
+      }
+      const prefilled = {};
+      Object.keys(emptyForm()).forEach((key) => {
+        prefilled[key] = report[key] === null || report[key] === undefined ? "" : String(report[key]);
+      });
+      setForm(prefilled);
+      setMachines(
+        (machineData || []).map((m) => ({
+          id: uid(),
+          machine_name: m.machine_name || "",
+          hours: m.hours === null || m.hours === undefined ? "" : String(m.hours),
+          driver_name: m.driver_name || "",
+        }))
+      );
+      setExistingFiles(
+        (fileData || []).map((f) => ({
+          ...f,
+          publicUrl: supabase.storage.from("site-reports").getPublicUrl(f.storage_path).data.publicUrl,
+        }))
+      );
+      setRemovedFileIds([]);
+      setLoadingReport(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [editReportId]);
+
+  // Existing attachments aren't deleted until the edit is saved, so removing one
+  // stays reversible up to that point.
+  function toggleExistingFile(id) {
+    setRemovedFileIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    if (errors.workPhotos) setErrors((e) => ({ ...e, workPhotos: false }));
+  }
 
   function setField(key, value) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -81,7 +135,8 @@ export default function NewReportForm({ onSubmitted }) {
     Object.entries(req).forEach(([k, v]) => {
       if (!v || String(v).trim() === "") newErrors[k] = true;
     });
-    if (workPhotos.length === 0) newErrors.workPhotos = true;
+    const keptPhotos = existingFiles.filter((f) => f.kind === "photo" && !removedFileIds.includes(f.id));
+    if (workPhotos.length === 0 && keptPhotos.length === 0) newErrors.workPhotos = true;
 
     const newMachineErrors = {};
     machines.forEach((m) => {
@@ -150,12 +205,31 @@ export default function NewReportForm({ onSubmitted }) {
         created_by: userData?.user?.id || null,
       };
 
-      const { data: inserted, error: insertError } = await supabase.from("reports").insert(payload).select().single();
-      if (insertError) throw insertError;
+      let reportId = editReportId;
+      if (isEdit) {
+        // created_by stays with whoever filed the report originally.
+        const { created_by, ...updates } = payload;
+        const { data: updated, error: updateError } = await supabase
+          .from("reports")
+          .update(updates)
+          .eq("id", editReportId)
+          .select()
+          .maybeSingle();
+        if (updateError) throw updateError;
+        if (!updated) throw new Error("That report couldn't be updated — you can only edit your own reports.");
+        // Machine rows are rewritten wholesale rather than diffed — they hold no
+        // history of their own, so a clean replace is simpler and can't drift.
+        const { error: clearError } = await supabase.from("machine_hours").delete().eq("report_id", editReportId);
+        if (clearError) throw clearError;
+      } else {
+        const { data: inserted, error: insertError } = await supabase.from("reports").insert(payload).select().single();
+        if (insertError) throw insertError;
+        reportId = inserted.id;
+      }
 
       if (machines.length > 0) {
         const machineRows = machines.map((m) => ({
-          report_id: inserted.id,
+          report_id: reportId,
           log_date: reportDate,
           machine_name: m.machine_name,
           hours: m.hours,
@@ -166,15 +240,29 @@ export default function NewReportForm({ onSubmitted }) {
         if (machineError) throw machineError;
       }
 
+      if (removedFileIds.length > 0) {
+        const paths = existingFiles.filter((f) => removedFileIds.includes(f.id)).map((f) => f.storage_path);
+        if (paths.length) await supabase.storage.from("site-reports").remove(paths);
+        const { error: fileDeleteError } = await supabase.from("report_files").delete().in("id", removedFileIds);
+        if (fileDeleteError) throw fileDeleteError;
+      }
+
       const allFiles = [...supportingFiles, ...workPhotos];
       for (const item of allFiles) {
-        await uploadFile(inserted.id, item);
+        await uploadFile(reportId, item);
       }
 
       try {
         await syncExcelExport();
       } catch (exportErr) {
         console.error("Excel export sync failed:", exportErr);
+      }
+
+      if (isEdit) {
+        setSupportingFiles([]);
+        setWorkPhotos([]);
+        onSaved?.();
+        return;
       }
 
       setForm(emptyForm());
@@ -186,14 +274,36 @@ export default function NewReportForm({ onSubmitted }) {
       onSubmitted?.();
     } catch (err) {
       console.error(err);
-      setSubmitError(err.message || "Something went wrong submitting the report. Check your connection and try again.");
+      setSubmitError(
+        err.message ||
+          (isEdit
+            ? "Something went wrong saving your changes. Check your connection and try again."
+            : "Something went wrong submitting the report. Check your connection and try again.")
+      );
     } finally {
       setSubmitting(false);
     }
   }
 
+  if (loadingReport) {
+    return (
+      <div style={{ display: "flex", justifyContent: "center", padding: 40 }}>
+        <Loader2 size={22} color="var(--accent)" className="spin" />
+      </div>
+    );
+  }
+
+  const existingPhotos = existingFiles.filter((f) => f.kind === "photo");
+  const existingSupporting = existingFiles.filter((f) => f.kind === "supporting");
+
   return (
     <div ref={topRef}>
+      {isEdit && (
+        <div className="banner" style={{ background: "rgba(127, 127, 127, 0.12)", border: "1px solid var(--border)" }}>
+          <AlertCircle size={16} color="var(--accent)" />
+          <span>Editing a saved report — saving overwrites the original.</span>
+        </div>
+      )}
       {submitted && (
         <div className="banner success">
           <Check size={16} color="var(--success)" />
@@ -428,6 +538,21 @@ export default function NewReportForm({ onSubmitted }) {
         Photos <span className="req">*</span>
         <div className="eyebrow-sub">At least one photo of the work is required.</div>
       </div>
+      {existingPhotos.length > 0 && (
+        <div className="file-grid" style={{ marginBottom: 12 }}>
+          {existingPhotos.map((f) => {
+            const removed = removedFileIds.includes(f.id);
+            return (
+              <div key={f.id} className="file-thumb" style={{ opacity: removed ? 0.35 : 1 }}>
+                <img src={f.publicUrl} alt={f.file_name} />
+                <button type="button" className="file-thumb-remove" onClick={() => toggleExistingFile(f.id)}>
+                  {removed ? <RotateCcw size={12} color="#fff" /> : <X size={12} color="#fff" />}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
       <FileUpload
         files={workPhotos}
         setFiles={setWorkPhotos}
@@ -442,6 +567,24 @@ export default function NewReportForm({ onSubmitted }) {
         Supporting files
         <div className="eyebrow-sub">Delivery dockets, sign-off sheets, or other documents (optional).</div>
       </div>
+      {existingSupporting.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+          {existingSupporting.map((f) => {
+            const removed = removedFileIds.includes(f.id);
+            return (
+              <div key={f.id} className="card" style={{ display: "flex", alignItems: "center", gap: 10, opacity: removed ? 0.45 : 1 }}>
+                <FileText size={16} color="var(--text-muted)" />
+                <div style={{ flex: 1, minWidth: 0, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {f.file_name}
+                </div>
+                <button type="button" className="icon-btn" onClick={() => toggleExistingFile(f.id)}>
+                  {removed ? <RotateCcw size={14} color="var(--text-muted)" /> : <X size={14} color="var(--text-muted)" />}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
       <FileUpload
         files={supportingFiles}
         setFiles={setSupportingFiles}
@@ -453,8 +596,13 @@ export default function NewReportForm({ onSubmitted }) {
 
       <button className="btn-primary" style={{ marginTop: 24 }} onClick={handleSubmit} disabled={submitting}>
         {submitting ? <Loader2 size={17} className="spin" /> : <Check size={17} />}
-        {submitting ? "Submitting..." : "Submit report"}
+        {submitting ? (isEdit ? "Saving..." : "Submitting...") : isEdit ? "Save changes" : "Submit report"}
       </button>
+      {isEdit && (
+        <button className="btn-secondary" style={{ marginTop: 10, width: "100%" }} onClick={onCancelEdit} disabled={submitting}>
+          Cancel
+        </button>
+      )}
     </div>
   );
 }

@@ -86,6 +86,7 @@ export default function App() {
             <ReportDetail
               reportId={detailId}
               onBack={() => setDetailId(null)}
+              onUpdated={() => setHistoryRefreshKey((k) => k + 1)}
               onDeleted={() => {
                 setDetailId(null);
                 setHistoryRefreshKey((k) => k + 1);

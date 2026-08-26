@@ -1,18 +1,21 @@
 import React, { useEffect, useState } from "react";
-import { ArrowLeft, Cloud, Sun, CloudDrizzle, CloudRain, Trash2, FileText, Loader2, Wrench } from "lucide-react";
+import { ArrowLeft, Cloud, Sun, CloudDrizzle, CloudRain, Trash2, FileText, Loader2, Wrench, Pencil } from "lucide-react";
 import { supabase } from "../supabaseClient";
 import { prettyDate, shortTime, fileSizeLabel, DUCT_FIELDS } from "../lib/helpers";
 import { syncExcelExport } from "../lib/exportExcel";
+import NewReportForm from "./NewReportForm";
 
 const WEATHER_ICONS = { Sunny: Sun, Overcast: Cloud, "Light rain": CloudDrizzle, "Heavy rain": CloudRain, Showers: CloudRain };
 
-export default function ReportDetail({ reportId, onBack, onDeleted }) {
+export default function ReportDetail({ reportId, onBack, onDeleted, onUpdated }) {
   const [report, setReport] = useState(null);
   const [files, setFiles] = useState([]);
   const [machines, setMachines] = useState([]);
   const [loading, setLoading] = useState(true);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -35,7 +38,7 @@ export default function ReportDetail({ reportId, onBack, onDeleted }) {
     return () => {
       cancelled = true;
     };
-  }, [reportId]);
+  }, [reportId, reloadKey]);
 
   async function handleDelete() {
     setDeleting(true);
@@ -68,6 +71,25 @@ export default function ReportDetail({ reportId, onBack, onDeleted }) {
         <button className="btn-secondary" onClick={onBack} style={{ marginTop: 14 }}>
           Back to history
         </button>
+      </div>
+    );
+  }
+
+  if (editing) {
+    return (
+      <div>
+        <button className="back-link" onClick={() => setEditing(false)}>
+          <ArrowLeft size={16} /> Back to report
+        </button>
+        <NewReportForm
+          editReportId={reportId}
+          onCancelEdit={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            setReloadKey((k) => k + 1);
+            onUpdated?.();
+          }}
+        />
       </div>
     );
   }
@@ -189,7 +211,12 @@ export default function ReportDetail({ reportId, onBack, onDeleted }) {
         </>
       )}
 
-      <div style={{ marginTop: 28 }}>
+      <div style={{ marginTop: 28, display: "flex", flexDirection: "column", gap: 10 }}>
+        {!confirmingDelete && (
+          <button className="btn-secondary" onClick={() => setEditing(true)}>
+            <Pencil size={15} /> Edit report
+          </button>
+        )}
         {!confirmingDelete ? (
           <button className="btn-secondary btn-danger-outline" onClick={() => setConfirmingDelete(true)}>
             <Trash2 size={15} /> Delete report

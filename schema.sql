@@ -490,3 +490,26 @@ alter table public.compliance_certs add column if not exists vehicle_model text;
 -- Add manual days-taken override to employees (Holidays tab)
 -- ============================================================
 alter table public.employees add column if not exists manual_days_taken numeric;
+
+-- ============================================================
+-- Allow reports to be edited after they're filed
+-- ============================================================
+-- The Edit button on a report detail page saves over the existing row.
+-- Machine hours and attached files are rewritten via the existing
+-- delete + insert policies, so only reports itself needed an update policy.
+-- Without this, RLS silently matches zero rows and the edit appears to save
+-- but changes nothing.
+
+create policy "users update own reports, admins update all"
+on reports for update to authenticated
+using (created_by = auth.uid() or public.is_admin())
+with check (created_by = auth.uid() or public.is_admin());
+
+-- The report_files insert policy only allowed attaching files to a report
+-- you created yourself. An admin editing someone else's report to attach a
+-- corrective photo would otherwise hit a silent RLS failure on upload.
+drop policy if exists "users insert own report files" on report_files;
+
+create policy "users insert own report files, admins insert on any report"
+on report_files for insert to authenticated
+with check (exists (select 1 from reports r where r.id = report_files.report_id and (r.created_by = auth.uid() or public.is_admin())));
