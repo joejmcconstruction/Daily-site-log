@@ -8,9 +8,10 @@ const EXPORT_FILE = "site-daily-report.xlsx";
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const KEY_SEP = "|||";
 
-// Costing assumptions from Joe (2026-08-16, refined 2026-08-17) — see
-// memory/project_costing_rules.md.
-// Fuel: a machine run 6 hrs/day uses 1.2x its tank capacity -> 0.2x tank per hour.
+// Costing assumptions from Joe (2026-08-16, refined 2026-08-17, fuel rate
+// corrected 2026-08-26) — see memory/project_costing_rules.md.
+// Fuel: a machine run 5 hrs/day empties a full tank every 5 days -> 25 hours
+// of running time uses one full tank -> 1/25 tank per hour.
 // Labour: a driver's operating hours are costed as part of the machine (fuel +
 // labour). The "Labour hours" field on a report is entered as everyone's GROSS
 // total man-hours for the day (e.g. 3 staff x 7.75hrs), so before costing it as
@@ -19,6 +20,7 @@ const KEY_SEP = "|||";
 // inside the ground-labour total. Example: 7.75hrs entered, 6hrs of that spent
 // driving the 13T Hitachi -> 1.75hrs costed as ground labour for that report.
 const FUEL_PRICE_PER_LITRE = 1.44; // EUR — from an EUR1440/1000L delivery, ~Aug 2026. Update here when fuel is repriced.
+const FUEL_TANKS_PER_HOUR = 1 / 25; // a full tank lasts 25 hours of machine running time
 const LABOUR_RATE_PER_HOUR = 30; // EUR/hour per man
 
 // Tank capacity (litres) per machine. The first two are Joe's own figures
@@ -157,10 +159,11 @@ function buildRatesSheet(wb) {
 }
 
 // Cost Report: hours are pulled in automatically per project/machine (and labour).
-// Fuel cost = hours x 0.2 x tank capacity x fuel price. Labour cost = hours x
-// labour rate. A machine's Total Cost is fuel + labour for the hours it ran; a
-// "Labour" row is ground-staff hours only (no fuel) — netted down per report
-// via groundLabourHours() so a driver's operating hours aren't double-counted.
+// Fuel cost = hours x (1/25) x tank capacity x fuel price (25 hours of running
+// time uses one full tank). Labour cost = hours x labour rate. A machine's
+// Total Cost is fuel + labour for the hours it ran; a "Labour" row is
+// ground-staff hours only (no fuel) — netted down per report via
+// groundLabourHours() so a driver's operating hours aren't double-counted.
 function buildCostReportSheet(wb, reports, machineHours, reportById, ratesRange) {
   const machineAgg = {};
   const machineProjects = new Set();
@@ -220,7 +223,7 @@ function buildCostReportSheet(wb, reports, machineHours, reportById, ratesRange)
     r.getCell(4).value = isLabour
       ? 0
       : {
-          formula: `C${excelRow}*0.2*VLOOKUP(B${excelRow},Rates!$A$${ratesRange.tankTableStartRow}:$B$${ratesRange.tankTableEndRow},2,FALSE)*Rates!$B$1`,
+          formula: `C${excelRow}*${FUEL_TANKS_PER_HOUR}*VLOOKUP(B${excelRow},Rates!$A$${ratesRange.tankTableStartRow}:$B$${ratesRange.tankTableEndRow},2,FALSE)*Rates!$B$1`,
         };
     r.getCell(5).value = { formula: `C${excelRow}*Rates!$B$2` };
     r.getCell(6).value = { formula: `D${excelRow}+E${excelRow}` };
@@ -305,7 +308,7 @@ function aggregateForDashboard(reports, machineHours, reportById) {
       const hrs = machineHoursByProjectMachine[p + KEY_SEP + machine] || 0;
       b.machineHours += hrs;
       const tank = machine in KNOWN_TANK_CAPACITY_L ? KNOWN_TANK_CAPACITY_L[machine] : 0;
-      b.fuelCost += hrs * 0.2 * tank * FUEL_PRICE_PER_LITRE;
+      b.fuelCost += hrs * FUEL_TANKS_PER_HOUR * tank * FUEL_PRICE_PER_LITRE;
     });
     b.labourCost = (b.machineHours + b.labourHoursGround) * LABOUR_RATE_PER_HOUR;
     b.totalCost = b.fuelCost + b.labourCost;
@@ -399,7 +402,7 @@ function buildDashboardSheet(wb, reports, machineHours, reportById) {
   ws.getCell(notesStartRow, 2).font = { bold: true, size: 11 };
   const notes = [
     "Regenerated automatically every time a report is submitted or deleted — always current with live data. Charts are pictures, redrawn on every regeneration, not native Excel charts reactive to manual cell edits.",
-    "Fuel rule: a machine run 6 hrs/day uses 1.2x its tank capacity -> 0.2x tank per hour, at the price on the Rates sheet.",
+    "Fuel rule: a machine run 5 hrs/day empties a full tank every 5 days -> 25 hours of running time uses one full tank -> 1/25 tank per hour, at the price on the Rates sheet.",
     "Labour rate is on the Rates sheet. \"Labour hours\" on a report is everyone's gross total for the day — that report's machine hours are automatically subtracted before it's costed as ground labour, so a driver's hours aren't paid twice (e.g. 7.75hrs entered, 6hrs driving -> 1.75hrs costed as ground labour).",
     'Machine tank capacities on the Rates sheet: "13T Hitachi" and Kubota are Joe\'s own figures; the rest were looked up online on 2026-08-17. Several are marked ASSUMPTION/AVERAGE in code comments (src/lib/exportExcel.js) where no exact spec was found or the model name was ambiguous — check those against the real machines and let me know any corrections.',
   ];
