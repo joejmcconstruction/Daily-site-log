@@ -4,7 +4,10 @@ export const PROJECT_OPTIONS = ["HML The Glen", "Glenageary Demo", "Farrenboley 
 
 export const LABOUR_RATE_NAME = "Labour";
 
-export const DUCT_FIELDS = [
+// Every measured quantity captured on a daily report. Drives the form grid,
+// the report detail view and the Excel export columns — add a field here plus
+// a matching column in schema.sql and it flows through all three.
+export const QUANTITY_FIELDS = [
   { key: "trench_excavated", label: "Trench excavated", unit: "m", required: true },
   { key: "trench_backfilled", label: "Trench backfilled", unit: "m", required: true },
   { key: "esb_5inch", label: 'ESB 5" duct laid', unit: "m", required: false },
@@ -17,6 +20,12 @@ export const DUCT_FIELDS = [
   { key: "siro_duct", label: "Siro duct installed", unit: "m", required: false },
   { key: "ev_charger_duct", label: "EV charger duct installed", unit: "m", required: false },
   { key: "chambers_fitted", label: "Chambers fitted", unit: "units", required: true },
+  { key: "water_main_trench", label: "Water main trench excavated", unit: "m", required: false },
+  { key: "storm_pipework_150mm", label: "Storm pipework fitted (150mm)", unit: "m", required: false },
+  { key: "gully_pots_fitted", label: "Gully pots fitted", unit: "units", required: false },
+  { key: "tree_pits_excavated", label: "Tree pits excavated", unit: "units", required: false },
+  { key: "kerb_base_prepped", label: "Kerb base prepped", unit: "m", required: false },
+  { key: "road_base_prepped", label: "Road base prepped", unit: "m²", required: false },
 ];
 
 export const MACHINE_OPTIONS = [

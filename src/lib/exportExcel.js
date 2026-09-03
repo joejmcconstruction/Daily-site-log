@@ -61,14 +61,23 @@ const REPORT_HEADER = [
   "Siro duct (m)",
   "EV charger duct (m)",
   "Chambers fitted",
+  "Water main trench (m)",
+  "Storm pipework 150mm (m)",
+  "Gully pots fitted",
+  "Tree pits excavated",
+  "Kerb base prepped (m)",
+  "Road base prepped (m2)",
   "Description",
   "Cause of delays",
   "Additional work",
 ];
-const REPORT_COL_WIDTHS = [12, 18, 12, 30, 12, 16, 16, 14, 14, 18, 14, 16, 14, 16, 14, 16, 14, 40, 30, 30];
+const REPORT_COL_WIDTHS = [12, 18, 12, 30, 12, 16, 16, 14, 14, 18, 14, 16, 14, 16, 14, 16, 14, 18, 22, 16, 16, 18, 20, 40, 30, 30];
 
 const MACHINE_HEADER = ["Date", "Project", "Machine", "Hours", "Driver"];
 const MACHINE_COL_WIDTHS = [12, 18, 24, 10, 20];
+
+const DAYWORK_HEADER = ["Date", "Project", "Man", "Machine", "Hours", "Description of activity"];
+const DAYWORK_COL_WIDTHS = [12, 18, 20, 22, 10, 50];
 
 // Sums machine hours per report_id, so gross labour hours can be netted down
 // to ground-only hours per report before costing (see costing assumptions above).
@@ -116,6 +125,12 @@ function buildReportsSheet(wb, reports) {
       r.siro_duct ?? "",
       r.ev_charger_duct ?? "",
       r.chambers_fitted ?? "",
+      r.water_main_trench ?? "",
+      r.storm_pipework_150mm ?? "",
+      r.gully_pots_fitted ?? "",
+      r.tree_pits_excavated ?? "",
+      r.kerb_base_prepped ?? "",
+      r.road_base_prepped ?? "",
       r.description,
       r.cause_of_delays || "",
       r.additional_work || "",
@@ -140,6 +155,38 @@ function buildMachineSheet(wb, machineHours, reportById) {
   return ws;
 }
 
+// The line-by-line record behind the Dayworks rows on the Cost Report — one row
+// per man and activity, so a charge can be traced back to the day and the
+// signed sheet it came off.
+function buildDayworksSheet(wb, dayworks, reportById) {
+  const ws = wb.addWorksheet("Dayworks");
+  ws.columns = DAYWORK_HEADER.map((h, i) => ({ header: h, width: DAYWORK_COL_WIDTHS[i] }));
+  const rows = dayworks
+    .slice()
+    .sort((a, b) => (a.log_date < b.log_date ? 1 : -1))
+    .map((d) => {
+      const report = d.report_id ? reportById[d.report_id] : null;
+      return [
+        d.log_date,
+        report ? report.project_name || "Unassigned" : "Unassigned",
+        d.man_name,
+        d.machine_name || "Hand work",
+        d.hours,
+        d.activity,
+      ];
+    });
+  ws.addRows(rows);
+  if (rows.length > 0) {
+    const totalRow = rows.length + 3;
+    ws.getCell(`D${totalRow}`).value = "Total daywork hours";
+    ws.getCell(`D${totalRow}`).font = { bold: true };
+    ws.getCell(`E${totalRow}`).value = { formula: `SUM(E2:E${rows.length + 1})` };
+    ws.getCell(`E${totalRow}`).font = { bold: true };
+  }
+  applyAutoFilterAndHeaderStyle(ws, DAYWORK_HEADER.length, rows.length + 1);
+  return ws;
+}
+
 function buildRatesSheet(wb) {
   const ws = wb.addWorksheet("Rates");
   ws.columns = [{ width: 26 }, { width: 16 }];
@@ -158,13 +205,40 @@ function buildRatesSheet(wb) {
   return { ws, tankTableStartRow, tankTableEndRow };
 }
 
+// Splits daywork hours per project into machine hours (a line with a machine —
+// the man was operating it, so those hours carry fuel + labour, exactly like a
+// contract machine row) and hand-work hours (labour only).
+function dayworkAggregates(dayworks, reportById) {
+  const machineAgg = {};
+  const labourAgg = {};
+  const projects = new Set();
+  dayworks.forEach((d) => {
+    const report = d.report_id ? reportById[d.report_id] : null;
+    const project = report ? report.project_name || "Unassigned" : "Unassigned";
+    projects.add(project);
+    const hrs = Number(d.hours) || 0;
+    if (d.machine_name) {
+      const key = project + KEY_SEP + d.machine_name;
+      machineAgg[key] = (machineAgg[key] || 0) + hrs;
+    } else {
+      labourAgg[project] = (labourAgg[project] || 0) + hrs;
+    }
+  });
+  return { machineAgg, labourAgg, projects };
+}
+
 // Cost Report: hours are pulled in automatically per project/machine (and labour).
 // Fuel cost = hours x (1/25) x tank capacity x fuel price (25 hours of running
 // time uses one full tank). Labour cost = hours x labour rate. A machine's
 // Total Cost is fuel + labour for the hours it ran; a "Labour" row is
 // ground-staff hours only (no fuel) — netted down per report via
 // groundLabourHours() so a driver's operating hours aren't double-counted.
-function buildCostReportSheet(wb, reports, machineHours, reportById, ratesRange) {
+// Every row is tagged Contract or Dayworks in the Type column so the two can be
+// filtered apart and are totalled separately per project. Daywork hours are
+// assumed to be logged ONLY in the dayworks rows — the form tells the crew not
+// to include them in the report's Labour hours or machine rows, so nothing here
+// nets them out.
+function buildCostReportSheet(wb, reports, machineHours, dayworks, reportById, ratesRange) {
   const machineAgg = {};
   const machineProjects = new Set();
   machineHours.forEach((m) => {
@@ -182,9 +256,11 @@ function buildCostReportSheet(wb, reports, machineHours, reportById, ratesRange)
     labourAgg[project] = (labourAgg[project] || 0) + groundLabourHours(r, machineHoursByReport);
   });
 
+  const dw = dayworkAggregates(dayworks, reportById);
+
   const projectOrder = [...PROJECT_OPTIONS];
   const seen = new Set(projectOrder);
-  [...Object.keys(labourAgg), ...machineProjects].forEach((p) => {
+  [...Object.keys(labourAgg), ...machineProjects, ...dw.projects].forEach((p) => {
     if (!seen.has(p)) {
       seen.add(p);
       projectOrder.push(p);
@@ -195,15 +271,23 @@ function buildCostReportSheet(wb, reports, machineHours, reportById, ratesRange)
   projectOrder.forEach((project) => {
     MACHINE_OPTIONS.forEach((machine) => {
       const hrs = machineAgg[project + KEY_SEP + machine];
-      if (hrs) costRows.push({ project, item: machine, hours: Number(hrs.toFixed(2)) });
+      if (hrs) costRows.push({ project, type: "Contract", item: machine, hours: Number(hrs.toFixed(2)) });
     });
     const labHrs = labourAgg[project];
-    if (labHrs) costRows.push({ project, item: "Labour", hours: Number(labHrs.toFixed(2)) });
+    if (labHrs) costRows.push({ project, type: "Contract", item: "Labour", hours: Number(labHrs.toFixed(2)) });
+
+    MACHINE_OPTIONS.forEach((machine) => {
+      const hrs = dw.machineAgg[project + KEY_SEP + machine];
+      if (hrs) costRows.push({ project, type: "Dayworks", item: machine, hours: Number(hrs.toFixed(2)) });
+    });
+    const dwLabHrs = dw.labourAgg[project];
+    if (dwLabHrs) costRows.push({ project, type: "Dayworks", item: "Labour", hours: Number(dwLabHrs.toFixed(2)) });
   });
 
   const ws = wb.addWorksheet("Cost Report");
   ws.columns = [
     { header: "Project", width: 20 },
+    { header: "Type", width: 12 },
     { header: "Item", width: 22 },
     { header: "Hours", width: 10 },
     { header: "Fuel Cost (€)", width: 14 },
@@ -218,15 +302,16 @@ function buildCostReportSheet(wb, reports, machineHours, reportById, ratesRange)
     const isLabour = row.item === "Labour";
     const r = ws.getRow(excelRow);
     r.getCell(1).value = row.project;
-    r.getCell(2).value = row.item;
-    r.getCell(3).value = row.hours;
-    r.getCell(4).value = isLabour
+    r.getCell(2).value = row.type;
+    r.getCell(3).value = row.item;
+    r.getCell(4).value = row.hours;
+    r.getCell(5).value = isLabour
       ? 0
       : {
-          formula: `C${excelRow}*${FUEL_TANKS_PER_HOUR}*VLOOKUP(B${excelRow},Rates!$A$${ratesRange.tankTableStartRow}:$B$${ratesRange.tankTableEndRow},2,FALSE)*Rates!$B$1`,
+          formula: `D${excelRow}*${FUEL_TANKS_PER_HOUR}*VLOOKUP(C${excelRow},Rates!$A$${ratesRange.tankTableStartRow}:$B$${ratesRange.tankTableEndRow},2,FALSE)*Rates!$B$1`,
         };
-    r.getCell(5).value = { formula: `C${excelRow}*Rates!$B$2` };
-    r.getCell(6).value = { formula: `D${excelRow}+E${excelRow}` };
+    r.getCell(6).value = { formula: `D${excelRow}*Rates!$B$2` };
+    r.getCell(7).value = { formula: `E${excelRow}+F${excelRow}` };
   });
   const dataEndRow = dataStartRow + costRows.length - 1;
   const hasData = costRows.length > 0;
@@ -234,23 +319,35 @@ function buildCostReportSheet(wb, reports, machineHours, reportById, ratesRange)
   const totalsLabelRow = dataEndRow + 2;
   ws.getCell(`A${totalsLabelRow}`).value = "Project Totals";
   ws.getCell(`A${totalsLabelRow}`).font = { bold: true };
+  ws.getCell(`E${totalsLabelRow}`).value = "Contract (€)";
+  ws.getCell(`F${totalsLabelRow}`).value = "Dayworks (€)";
+  ws.getCell(`G${totalsLabelRow}`).value = "Total (€)";
+  ["E", "F", "G"].forEach((col) => {
+    ws.getCell(`${col}${totalsLabelRow}`).font = { bold: true };
+  });
+
   const totalsStartRow = totalsLabelRow + 1;
   projectOrder.forEach((project, i) => {
     const excelRow = totalsStartRow + i;
     ws.getCell(`A${excelRow}`).value = project;
-    ws.getCell(`F${excelRow}`).value = hasData
-      ? { formula: `SUMIF($A$${dataStartRow}:$A$${dataEndRow},A${excelRow},$F$${dataStartRow}:$F$${dataEndRow})` }
-      : 0;
+    const sumifs = (type) =>
+      `SUMIFS($G$${dataStartRow}:$G$${dataEndRow},$A$${dataStartRow}:$A$${dataEndRow},A${excelRow},$B$${dataStartRow}:$B$${dataEndRow},"${type}")`;
+    ws.getCell(`E${excelRow}`).value = hasData ? { formula: sumifs("Contract") } : 0;
+    ws.getCell(`F${excelRow}`).value = hasData ? { formula: sumifs("Dayworks") } : 0;
+    ws.getCell(`G${excelRow}`).value = { formula: `E${excelRow}+F${excelRow}` };
   });
   const totalsEndRow = totalsStartRow + projectOrder.length - 1;
 
   const grandTotalRow = totalsEndRow + 2;
   ws.getCell(`A${grandTotalRow}`).value = "Grand Total";
   ws.getCell(`A${grandTotalRow}`).font = { bold: true };
-  ws.getCell(`F${grandTotalRow}`).value = { formula: `SUM($F$${totalsStartRow}:$F$${totalsEndRow})` };
-  ws.getCell(`F${grandTotalRow}`).font = { bold: true };
+  ["E", "F", "G"].forEach((col) => {
+    const cell = ws.getCell(`${col}${grandTotalRow}`);
+    cell.value = { formula: `SUM(${col}${totalsStartRow}:${col}${totalsEndRow})` };
+    cell.font = { bold: true };
+  });
 
-  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(dataEndRow, 1), column: 6 } };
+  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(dataEndRow, 1), column: 7 } };
   return ws;
 }
 
@@ -258,7 +355,7 @@ function buildCostReportSheet(wb, reports, machineHours, reportById, ratesRange)
 // project — reused by the Dashboard sheet's KPI tiles and chart images.
 // Unlike buildCostReportSheet (which writes live formulas), this returns
 // plain numbers because a chart image has to be drawn from real values.
-function aggregateForDashboard(reports, machineHours, reportById) {
+function aggregateForDashboard(reports, machineHours, dayworks, reportById) {
   const projectOrder = [...PROJECT_OPTIONS];
   const seen = new Set(projectOrder);
   const byProject = {};
@@ -276,8 +373,10 @@ function aggregateForDashboard(reports, machineHours, reportById) {
         trenchBackfilled: 0,
         labourHoursGround: 0,
         machineHours: 0,
+        dayworkHours: 0,
         fuelCost: 0,
         labourCost: 0,
+        dayworksCost: 0,
         totalCost: 0,
       };
     }
@@ -302,6 +401,11 @@ function aggregateForDashboard(reports, machineHours, reportById) {
     machineHoursByProjectMachine[key] = (machineHoursByProjectMachine[key] || 0) + (Number(m.hours) || 0);
   });
 
+  // Dayworks are costed on the same rules as contract work, but kept in their
+  // own bucket so the chart and KPIs can show what's chargeable on top.
+  const dw = dayworkAggregates(dayworks, reportById);
+  dw.projects.forEach((p) => bucket(p));
+
   projectOrder.forEach((p) => {
     const b = bucket(p);
     MACHINE_OPTIONS.forEach((machine) => {
@@ -309,9 +413,17 @@ function aggregateForDashboard(reports, machineHours, reportById) {
       b.machineHours += hrs;
       const tank = machine in KNOWN_TANK_CAPACITY_L ? KNOWN_TANK_CAPACITY_L[machine] : 0;
       b.fuelCost += hrs * FUEL_TANKS_PER_HOUR * tank * FUEL_PRICE_PER_LITRE;
+
+      const dwHrs = dw.machineAgg[p + KEY_SEP + machine] || 0;
+      b.dayworkHours += dwHrs;
+      b.dayworksCost += dwHrs * FUEL_TANKS_PER_HOUR * tank * FUEL_PRICE_PER_LITRE + dwHrs * LABOUR_RATE_PER_HOUR;
     });
+    const dwHandHrs = dw.labourAgg[p] || 0;
+    b.dayworkHours += dwHandHrs;
+    b.dayworksCost += dwHandHrs * LABOUR_RATE_PER_HOUR;
+
     b.labourCost = (b.machineHours + b.labourHoursGround) * LABOUR_RATE_PER_HOUR;
-    b.totalCost = b.fuelCost + b.labourCost;
+    b.totalCost = b.fuelCost + b.labourCost + b.dayworksCost;
   });
 
   return { projectOrder, perProject: projectOrder.map((p) => byProject[p]) };
@@ -320,9 +432,19 @@ function aggregateForDashboard(reports, machineHours, reportById) {
 // Dashboard sheet: KPI tiles + chart images, all computed fresh from the same
 // live data as the other sheets. See dashboardCharts.js for why these are
 // embedded pictures rather than native Excel chart objects.
-function buildDashboardSheet(wb, reports, machineHours, reportById) {
+function buildDashboardSheet(wb, reports, machineHours, dayworks, reportById) {
   const ws = wb.addWorksheet("Dashboard", { views: [{ showGridLines: false }] });
-  ws.columns = [{ width: 3 }, { width: 20 }, { width: 20 }, { width: 20 }, { width: 20 }, { width: 20 }, { width: 20 }, { width: 3 }];
+  ws.columns = [
+    { width: 3 },
+    { width: 20 },
+    { width: 20 },
+    { width: 20 },
+    { width: 20 },
+    { width: 20 },
+    { width: 20 },
+    { width: 20 },
+    { width: 3 },
+  ];
 
   const totalReports = reports.length;
   const trenchExcavatedTotal = reports.reduce((s, r) => s + (Number(r.trench_excavated) || 0), 0);
@@ -330,14 +452,15 @@ function buildDashboardSheet(wb, reports, machineHours, reportById) {
   const chambersFittedTotal = reports.reduce((s, r) => s + (Number(r.chambers_fitted) || 0), 0);
   const machineHoursTotal = machineHours.reduce((s, m) => s + (Number(m.hours) || 0), 0);
 
-  const { projectOrder, perProject } = aggregateForDashboard(reports, machineHours, reportById);
+  const { projectOrder, perProject } = aggregateForDashboard(reports, machineHours, dayworks, reportById);
   const grandTotalCost = perProject.reduce((s, p) => s + p.totalCost, 0);
+  const grandDayworksCost = perProject.reduce((s, p) => s + p.dayworksCost, 0);
 
-  ws.mergeCells("B2:G2");
+  ws.mergeCells("B2:H2");
   ws.getCell("B2").value = "Project Progress & Cost Dashboard";
   ws.getCell("B2").font = { bold: true, size: 18, color: { argb: "FF211F1A" } };
 
-  ws.mergeCells("B3:G3");
+  ws.mergeCells("B3:H3");
   ws.getCell("B3").value = `Generated ${new Date().toLocaleString()} — ${totalReports} reports across ${projectOrder.length} projects`;
   ws.getCell("B3").font = { size: 11, color: { argb: "FF6B6459" } };
 
@@ -347,6 +470,7 @@ function buildDashboardSheet(wb, reports, machineHours, reportById) {
     ["Trench backfilled", `${trenchBackfilledTotal} m`],
     ["Chambers fitted", String(chambersFittedTotal)],
     ["Machine hours", `${machineHoursTotal} h`],
+    ["Dayworks cost", `€${grandDayworksCost.toFixed(0)}`],
     ["Total cost", `€${grandTotalCost.toFixed(0)}`],
   ];
   kpis.forEach((kpi, i) => {
@@ -381,7 +505,7 @@ function buildDashboardSheet(wb, reports, machineHours, reportById) {
   const trenchId = wb.addImage({ base64: trenchImg, extension: "png" });
   ws.addImage(trenchId, { tl: { col: 4, row: 8 }, ext: { width: 460, height: 280 } });
 
-  ws.getCell(23, 2).value = "Operating cost by project (fuel + labour)";
+  ws.getCell(23, 2).value = "Operating cost by project (contract fuel + labour, plus dayworks)";
   ws.getCell(23, 2).font = { bold: true, size: 12 };
 
   const costImg = renderStackedBarChart({
@@ -389,6 +513,7 @@ function buildDashboardSheet(wb, reports, machineHours, reportById) {
     segments: [
       { label: "Fuel", values: perProject.map((p) => Number(p.fuelCost.toFixed(2))) },
       { label: "Labour", values: perProject.map((p) => Number(p.labourCost.toFixed(2))) },
+      { label: "Dayworks", values: perProject.map((p) => Number(p.dayworksCost.toFixed(2))) },
     ],
     width: 700,
     height: 300,
@@ -404,6 +529,7 @@ function buildDashboardSheet(wb, reports, machineHours, reportById) {
     "Regenerated automatically every time a report is submitted or deleted — always current with live data. Charts are pictures, redrawn on every regeneration, not native Excel charts reactive to manual cell edits.",
     "Fuel rule: a machine run 5 hrs/day empties a full tank every 5 days -> 25 hours of running time uses one full tank -> 1/25 tank per hour, at the price on the Rates sheet.",
     "Labour rate is on the Rates sheet. \"Labour hours\" on a report is everyone's gross total for the day — that report's machine hours are automatically subtracted before it's costed as ground labour, so a driver's hours aren't paid twice (e.g. 7.75hrs entered, 6hrs driving -> 1.75hrs costed as ground labour).",
+    "Dayworks are costed on the same fuel and labour rules as contract work, but tagged separately: the Cost Report's Type column splits Contract from Dayworks and totals each per project, and the cost chart shows Dayworks as its own band. A daywork line with a machine carries fuel + labour for those hours; a hand-work line is labour only. IMPORTANT: this assumes daywork hours are logged ONLY in the Dayworks section — the form tells the crew not to also include them in Labour hours or a machine row, otherwise they'd be counted twice. The full detail, and which signed sheet backs each line, is on the Dayworks sheet and in the app.",
     'Machine tank capacities on the Rates sheet: "13T Hitachi" and Kubota are Joe\'s own figures; the rest were looked up online on 2026-08-17. Several are marked ASSUMPTION/AVERAGE in code comments (src/lib/exportExcel.js) where no exact spec was found or the model name was ambiguous — check those against the real machines and let me know any corrections.',
   ];
   notes.forEach((note, i) => {
@@ -421,17 +547,19 @@ function buildDashboardSheet(wb, reports, machineHours, reportById) {
 export function buildWorkbook(data) {
   const reports = data.reports;
   const machineHours = data.machineHours;
+  const dayworks = data.dayworks || [];
   const wb = new ExcelJS.Workbook();
   const reportById = {};
   reports.forEach((r) => {
     reportById[r.id] = r;
   });
 
-  buildDashboardSheet(wb, reports, machineHours, reportById);
+  buildDashboardSheet(wb, reports, machineHours, dayworks, reportById);
   buildReportsSheet(wb, reports);
   buildMachineSheet(wb, machineHours, reportById);
+  buildDayworksSheet(wb, dayworks, reportById);
   const ratesResult = buildRatesSheet(wb);
-  buildCostReportSheet(wb, reports, machineHours, reportById, ratesResult);
+  buildCostReportSheet(wb, reports, machineHours, dayworks, reportById, ratesResult);
 
   return wb;
 }
@@ -440,11 +568,20 @@ export function buildWorkbook(data) {
 // private file in Supabase Storage. Called automatically after a report is
 // submitted or deleted — there's no export button in the app.
 export async function syncExcelExport() {
-  const [reportsRes, machineRes] = await Promise.all([supabase.from("reports").select("*"), supabase.from("machine_hours").select("*")]);
+  const [reportsRes, machineRes, dayworksRes] = await Promise.all([
+    supabase.from("reports").select("*"),
+    supabase.from("machine_hours").select("*"),
+    supabase.from("dayworks").select("*"),
+  ]);
   if (reportsRes.error) throw reportsRes.error;
   if (machineRes.error) throw machineRes.error;
+  if (dayworksRes.error) throw dayworksRes.error;
 
-  const wb = buildWorkbook({ reports: reportsRes.data || [], machineHours: machineRes.data || [] });
+  const wb = buildWorkbook({
+    reports: reportsRes.data || [],
+    machineHours: machineRes.data || [],
+    dayworks: dayworksRes.data || [],
+  });
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: XLSX_MIME });
 

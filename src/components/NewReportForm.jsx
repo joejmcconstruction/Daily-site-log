@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Check, AlertCircle, Loader2, Camera, Paperclip, Plus, X, RotateCcw, FileText } from "lucide-react";
+import { Check, AlertCircle, Loader2, Camera, Paperclip, Plus, X, RotateCcw, FileText, ClipboardList } from "lucide-react";
 import { supabase } from "../supabaseClient";
-import { WEATHER_OPTIONS, DUCT_FIELDS, PROJECT_OPTIONS, MACHINE_OPTIONS, dateKey, uid } from "../lib/helpers";
+import { WEATHER_OPTIONS, QUANTITY_FIELDS, PROJECT_OPTIONS, MACHINE_OPTIONS, dateKey, uid } from "../lib/helpers";
 import { syncExcelExport } from "../lib/exportExcel";
 import FileUpload from "./FileUpload";
 
@@ -24,11 +24,19 @@ const emptyForm = () => ({
   siro_duct: "",
   ev_charger_duct: "",
   chambers_fitted: "",
+  water_main_trench: "",
+  storm_pipework_150mm: "",
+  gully_pots_fitted: "",
+  tree_pits_excavated: "",
+  kerb_base_prepped: "",
+  road_base_prepped: "",
   cause_of_delays: "",
   additional_work: "",
 });
 
 const emptyMachineRow = () => ({ id: uid(), machine_name: "", hours: "", driver_name: "" });
+
+const emptyDayworkRow = () => ({ id: uid(), man_name: "", machine_name: "", hours: "", activity: "" });
 
 // Doubles as the edit form: pass editReportId and the same fields load from the
 // saved report and save back over it instead of creating a new one.
@@ -36,6 +44,8 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
   const isEdit = !!editReportId;
   const [form, setForm] = useState(emptyForm());
   const [machines, setMachines] = useState([]);
+  const [dayworks, setDayworks] = useState([]);
+  const [dayworksSheets, setDayworksSheets] = useState([]);
   const [supportingFiles, setSupportingFiles] = useState([]);
   const [workPhotos, setWorkPhotos] = useState([]);
   const [existingFiles, setExistingFiles] = useState([]);
@@ -43,6 +53,7 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
   const [loadingReport, setLoadingReport] = useState(isEdit);
   const [errors, setErrors] = useState({});
   const [machineErrors, setMachineErrors] = useState({});
+  const [dayworkErrors, setDayworkErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [submitError, setSubmitError] = useState("");
@@ -55,6 +66,7 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
       setLoadingReport(true);
       const { data: report, error: loadError } = await supabase.from("reports").select("*").eq("id", editReportId).single();
       const { data: machineData } = await supabase.from("machine_hours").select("*").eq("report_id", editReportId);
+      const { data: dayworkData } = await supabase.from("dayworks").select("*").eq("report_id", editReportId);
       const { data: fileData } = await supabase.from("report_files").select("*").eq("report_id", editReportId);
       if (cancelled) return;
       if (loadError || !report) {
@@ -73,6 +85,15 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
           machine_name: m.machine_name || "",
           hours: m.hours === null || m.hours === undefined ? "" : String(m.hours),
           driver_name: m.driver_name || "",
+        }))
+      );
+      setDayworks(
+        (dayworkData || []).map((d) => ({
+          id: uid(),
+          man_name: d.man_name || "",
+          machine_name: d.machine_name || "",
+          hours: d.hours === null || d.hours === undefined ? "" : String(d.hours),
+          activity: d.activity || "",
         }))
       );
       setExistingFiles(
@@ -119,6 +140,24 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
     setMachineErrors((e) => (e[id]?.[key] ? { ...e, [id]: { ...e[id], [key]: false } } : e));
   }
 
+  function addDaywork() {
+    setDayworks((prev) => [...prev, emptyDayworkRow()]);
+  }
+
+  function removeDaywork(id) {
+    setDayworks((prev) => prev.filter((d) => d.id !== id));
+    setDayworkErrors((e) => {
+      const next = { ...e };
+      delete next[id];
+      return next;
+    });
+  }
+
+  function setDayworkField(id, key, value) {
+    setDayworks((prev) => prev.map((d) => (d.id === id ? { ...d, [key]: value } : d)));
+    setDayworkErrors((e) => (e[id]?.[key] ? { ...e, [id]: { ...e[id], [key]: false } } : e));
+  }
+
   function validate() {
     const req = {
       report_date: form.report_date,
@@ -147,9 +186,25 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
       if (Object.keys(rowErrors).length > 0) newMachineErrors[m.id] = rowErrors;
     });
 
+    // Machine is optional on a daywork line (hand-dig work has none), the rest
+    // are needed for the line to stand up as a charge.
+    const newDayworkErrors = {};
+    dayworks.forEach((d) => {
+      const rowErrors = {};
+      if (!d.man_name || !d.man_name.trim()) rowErrors.man_name = true;
+      if (!d.hours || String(d.hours).trim() === "") rowErrors.hours = true;
+      if (!d.activity || !d.activity.trim()) rowErrors.activity = true;
+      if (Object.keys(rowErrors).length > 0) newDayworkErrors[d.id] = rowErrors;
+    });
+
     setErrors(newErrors);
     setMachineErrors(newMachineErrors);
-    return Object.keys(newErrors).length === 0 && Object.keys(newMachineErrors).length === 0;
+    setDayworkErrors(newDayworkErrors);
+    return (
+      Object.keys(newErrors).length === 0 &&
+      Object.keys(newMachineErrors).length === 0 &&
+      Object.keys(newDayworkErrors).length === 0
+    );
   }
 
   async function uploadFile(reportId, item) {
@@ -200,6 +255,12 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
         siro_duct: form.siro_duct || null,
         ev_charger_duct: form.ev_charger_duct || null,
         chambers_fitted: form.chambers_fitted || null,
+        water_main_trench: form.water_main_trench || null,
+        storm_pipework_150mm: form.storm_pipework_150mm || null,
+        gully_pots_fitted: form.gully_pots_fitted || null,
+        tree_pits_excavated: form.tree_pits_excavated || null,
+        kerb_base_prepped: form.kerb_base_prepped || null,
+        road_base_prepped: form.road_base_prepped || null,
         cause_of_delays: form.cause_of_delays || null,
         additional_work: form.additional_work || null,
         created_by: userData?.user?.id || null,
@@ -221,6 +282,9 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
         // history of their own, so a clean replace is simpler and can't drift.
         const { error: clearError } = await supabase.from("machine_hours").delete().eq("report_id", editReportId);
         if (clearError) throw clearError;
+        // Daywork rows are replaced the same way, and for the same reason.
+        const { error: clearDayworkError } = await supabase.from("dayworks").delete().eq("report_id", editReportId);
+        if (clearDayworkError) throw clearDayworkError;
       } else {
         const { data: inserted, error: insertError } = await supabase.from("reports").insert(payload).select().single();
         if (insertError) throw insertError;
@@ -240,6 +304,20 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
         if (machineError) throw machineError;
       }
 
+      if (dayworks.length > 0) {
+        const dayworkRows = dayworks.map((d) => ({
+          report_id: reportId,
+          log_date: reportDate,
+          man_name: d.man_name.trim(),
+          machine_name: d.machine_name || null,
+          hours: d.hours,
+          activity: d.activity.trim(),
+          created_by: userData?.user?.id || null,
+        }));
+        const { error: dayworkError } = await supabase.from("dayworks").insert(dayworkRows);
+        if (dayworkError) throw dayworkError;
+      }
+
       if (removedFileIds.length > 0) {
         const paths = existingFiles.filter((f) => removedFileIds.includes(f.id)).map((f) => f.storage_path);
         if (paths.length) await supabase.storage.from("site-reports").remove(paths);
@@ -247,7 +325,7 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
         if (fileDeleteError) throw fileDeleteError;
       }
 
-      const allFiles = [...supportingFiles, ...workPhotos];
+      const allFiles = [...supportingFiles, ...workPhotos, ...dayworksSheets];
       for (const item of allFiles) {
         await uploadFile(reportId, item);
       }
@@ -261,14 +339,17 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
       if (isEdit) {
         setSupportingFiles([]);
         setWorkPhotos([]);
+        setDayworksSheets([]);
         onSaved?.();
         return;
       }
 
       setForm(emptyForm());
       setMachines([]);
+      setDayworks([]);
       setSupportingFiles([]);
       setWorkPhotos([]);
+      setDayworksSheets([]);
       setSubmitted(true);
       setTimeout(() => setSubmitted(false), 3000);
       onSubmitted?.();
@@ -295,6 +376,7 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
 
   const existingPhotos = existingFiles.filter((f) => f.kind === "photo");
   const existingSupporting = existingFiles.filter((f) => f.kind === "supporting");
+  const existingDayworkSheets = existingFiles.filter((f) => f.kind === "dayworks");
 
   return (
     <div ref={topRef}>
@@ -316,7 +398,7 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
           <span>{submitError}</span>
         </div>
       )}
-      {(Object.keys(errors).length > 0 || Object.keys(machineErrors).length > 0) && (
+      {(Object.keys(errors).length > 0 || Object.keys(machineErrors).length > 0 || Object.keys(dayworkErrors).length > 0) && (
         <div className="banner error">
           <AlertCircle size={16} color="var(--danger)" />
           <span>Fill in the required fields marked in red below.</span>
@@ -420,11 +502,11 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
       </div>
 
       <div className="eyebrow">
-        Ducting &amp; Trenching
-        <div className="eyebrow-sub">Enter quantities for today. Leave blank if not applicable.</div>
+        Site Quantities
+        <div className="eyebrow-sub">Ducting, drainage, kerbing &amp; roads. Enter quantities for today — leave blank if not applicable.</div>
       </div>
       <div className="duct-grid">
-        {DUCT_FIELDS.map((f) => (
+        {QUANTITY_FIELDS.map((f) => (
           <div className="field" key={f.key}>
             <label className="label">
               {f.label} {f.required && <span className="req">*</span>}
@@ -511,6 +593,111 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
       <button type="button" className="btn-secondary" onClick={addMachine}>
         <Plus size={15} /> Add machine
       </button>
+
+      <div className="eyebrow">
+        Dayworks
+        <div className="eyebrow-sub">
+          One row per man and activity carried out on dayworks today (optional). Log daywork hours here only — leave them out
+          of the labour hours and machine hours above, or they'll be counted twice. Upload the signed sheet below.
+        </div>
+      </div>
+      {dayworks.map((d) => {
+        const rowErr = dayworkErrors[d.id] || {};
+        return (
+          <div className="machine-row" key={d.id}>
+            <button type="button" className="machine-row-remove" onClick={() => removeDaywork(d.id)}>
+              <X size={13} color="var(--text-muted)" />
+            </button>
+            <div style={{ display: "flex", gap: 10 }}>
+              <div className="field" style={{ flex: 1 }}>
+                <label className="label">
+                  Man <span className="req">*</span>
+                </label>
+                <input
+                  className={`input ${rowErr.man_name ? "error" : ""}`}
+                  type="text"
+                  placeholder="Name"
+                  value={d.man_name}
+                  onChange={(e) => setDayworkField(d.id, "man_name", e.target.value)}
+                />
+                {rowErr.man_name && <div className="hint error">Man is required</div>}
+              </div>
+              <div className="field" style={{ flex: 1 }}>
+                <label className="label">Hours <span className="req">*</span></label>
+                <input
+                  className={`input ${rowErr.hours ? "error" : ""}`}
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="any"
+                  placeholder="0"
+                  value={d.hours}
+                  onChange={(e) => setDayworkField(d.id, "hours", e.target.value)}
+                />
+                {rowErr.hours && <div className="hint error">Hours is required</div>}
+              </div>
+            </div>
+            <div className="field">
+              <label className="label">Machine</label>
+              <select className="input" value={d.machine_name} onChange={(e) => setDayworkField(d.id, "machine_name", e.target.value)}>
+                <option value="">None — hand work</option>
+                {MACHINE_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label className="label">
+                Description of activity <span className="req">*</span>
+              </label>
+              <textarea
+                className={`input ${rowErr.activity ? "error" : ""}`}
+                rows={2}
+                placeholder="What was done, and who instructed it"
+                value={d.activity}
+                onChange={(e) => setDayworkField(d.id, "activity", e.target.value)}
+              />
+              {rowErr.activity && <div className="hint error">Description of activity is required</div>}
+            </div>
+          </div>
+        );
+      })}
+      <button type="button" className="btn-secondary" onClick={addDaywork}>
+        <Plus size={15} /> Add daywork line
+      </button>
+
+      <div className="eyebrow" style={{ marginTop: 22 }}>
+        Signed dayworks sheet
+        <div className="eyebrow-sub">Photo or scan of the sheet signed off on site (optional).</div>
+      </div>
+      {existingDayworkSheets.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+          {existingDayworkSheets.map((f) => {
+            const removed = removedFileIds.includes(f.id);
+            return (
+              <div key={f.id} className="card" style={{ display: "flex", alignItems: "center", gap: 10, opacity: removed ? 0.45 : 1 }}>
+                <FileText size={16} color="var(--text-muted)" />
+                <div style={{ flex: 1, minWidth: 0, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {f.file_name}
+                </div>
+                <button type="button" className="icon-btn" onClick={() => toggleExistingFile(f.id)}>
+                  {removed ? <RotateCcw size={14} color="var(--text-muted)" /> : <X size={14} color="var(--text-muted)" />}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <FileUpload
+        files={dayworksSheets}
+        setFiles={setDayworksSheets}
+        accept="image/*,.pdf,.doc,.docx"
+        label="Add signed dayworks sheet"
+        icon={ClipboardList}
+        kind="dayworks"
+      />
 
       <div className="eyebrow">Delays &amp; Variations</div>
       <div className="field">

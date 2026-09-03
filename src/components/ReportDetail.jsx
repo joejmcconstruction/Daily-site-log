@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { ArrowLeft, Cloud, Sun, CloudDrizzle, CloudRain, Trash2, FileText, Loader2, Wrench, Pencil } from "lucide-react";
+import { ArrowLeft, Cloud, Sun, CloudDrizzle, CloudRain, Trash2, FileText, Loader2, Wrench, Pencil, ClipboardList } from "lucide-react";
 import { supabase } from "../supabaseClient";
-import { prettyDate, shortTime, fileSizeLabel, DUCT_FIELDS } from "../lib/helpers";
+import { prettyDate, shortTime, fileSizeLabel, QUANTITY_FIELDS } from "../lib/helpers";
 import { syncExcelExport } from "../lib/exportExcel";
 import NewReportForm from "./NewReportForm";
 
@@ -11,6 +11,7 @@ export default function ReportDetail({ reportId, onBack, onDeleted, onUpdated })
   const [report, setReport] = useState(null);
   const [files, setFiles] = useState([]);
   const [machines, setMachines] = useState([]);
+  const [dayworks, setDayworks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -24,9 +25,11 @@ export default function ReportDetail({ reportId, onBack, onDeleted, onUpdated })
       const { data: reportData } = await supabase.from("reports").select("*").eq("id", reportId).single();
       const { data: fileData } = await supabase.from("report_files").select("*").eq("report_id", reportId);
       const { data: machineData } = await supabase.from("machine_hours").select("*").eq("report_id", reportId);
+      const { data: dayworkData } = await supabase.from("dayworks").select("*").eq("report_id", reportId);
       if (cancelled) return;
       setReport(reportData);
       setMachines(machineData || []);
+      setDayworks(dayworkData || []);
       setFiles(
         (fileData || []).map((f) => ({
           ...f,
@@ -95,9 +98,11 @@ export default function ReportDetail({ reportId, onBack, onDeleted, onUpdated })
   }
 
   const WIcon = WEATHER_ICONS[report.weather] || Cloud;
-  const ductValues = DUCT_FIELDS.filter((d) => report[d.key] !== null && report[d.key] !== undefined && report[d.key] !== "");
+  const quantityValues = QUANTITY_FIELDS.filter((d) => report[d.key] !== null && report[d.key] !== undefined && report[d.key] !== "");
   const photos = files.filter((f) => f.kind === "photo");
   const supportingFiles = files.filter((f) => f.kind === "supporting");
+  const dayworkSheets = files.filter((f) => f.kind === "dayworks");
+  const dayworkHoursTotal = Number(dayworks.reduce((sum, d) => sum + (Number(d.hours) || 0), 0).toFixed(2));
 
   return (
     <div>
@@ -130,11 +135,11 @@ export default function ReportDetail({ reportId, onBack, onDeleted, onUpdated })
       <div className="eyebrow">Work completed</div>
       <p className="detail-text">{report.description}</p>
 
-      {ductValues.length > 0 && (
+      {quantityValues.length > 0 && (
         <>
-          <div className="eyebrow">Ducting &amp; Trenching</div>
+          <div className="eyebrow">Site Quantities</div>
           <div className="duct-grid">
-            {ductValues.map((d) => (
+            {quantityValues.map((d) => (
               <div className="card" key={d.key}>
                 <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>{d.label}</div>
                 <div style={{ fontSize: 16, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace" }}>
@@ -160,6 +165,53 @@ export default function ReportDetail({ reportId, onBack, onDeleted, onUpdated })
                 </div>
                 <div style={{ fontSize: 14, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace" }}>{m.hours}h</div>
               </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {dayworks.length > 0 && (
+        <>
+          <div className="eyebrow">Dayworks · {dayworkHoursTotal}h total</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {dayworks.map((d) => (
+              <div className="card" key={d.id}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <ClipboardList size={15} color="var(--accent-2)" />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{d.man_name}</div>
+                    <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{d.machine_name || "Hand work — no machine"}</div>
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace" }}>{d.hours}h</div>
+                </div>
+                <div style={{ fontSize: 12.5, marginTop: 8 }}>{d.activity}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {dayworkSheets.length > 0 && (
+        <>
+          <div className="eyebrow">Signed dayworks sheets</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {dayworkSheets.map((f) => (
+              <a
+                key={f.id}
+                href={f.publicUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="card"
+                style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "var(--text)" }}
+              >
+                <FileText size={16} color="var(--text-muted)" />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {f.file_name}
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{fileSizeLabel(f.file_size)}</div>
+                </div>
+              </a>
             ))}
           </div>
         </>

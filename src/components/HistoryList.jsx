@@ -68,7 +68,7 @@ export default function HistoryList({ onOpen, refreshKey }) {
         {reports.map((r) => {
           const WIcon = WEATHER_ICONS[r.weather] || Cloud;
           const photoCount = r.report_files?.filter((f) => f.kind === "photo").length || 0;
-          const fileCount = r.report_files?.filter((f) => f.kind === "supporting").length || 0;
+          const fileCount = r.report_files?.filter((f) => f.kind === "supporting" || f.kind === "dayworks").length || 0;
           return (
             <button key={r.id} className="report-row" onClick={() => onOpen(r.id)}>
               <div className="report-row-icon">

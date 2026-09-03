@@ -513,3 +513,57 @@ drop policy if exists "users insert own report files" on report_files;
 create policy "users insert own report files, admins insert on any report"
 on report_files for insert to authenticated
 with check (exists (select 1 from reports r where r.id = report_files.report_id and (r.created_by = auth.uid() or public.is_admin())));
+
+-- ============================================================
+-- Expanded scope: drainage, roads & kerbing quantities
+-- ============================================================
+-- New measured quantities on the daily report, matching QUANTITY_FIELDS in
+-- src/lib/helpers.js. All optional — blank means "not applicable today".
+
+alter table public.reports add column if not exists water_main_trench numeric;
+alter table public.reports add column if not exists storm_pipework_150mm numeric;
+alter table public.reports add column if not exists gully_pots_fitted numeric;
+alter table public.reports add column if not exists tree_pits_excavated numeric;
+alter table public.reports add column if not exists kerb_base_prepped numeric;
+alter table public.reports add column if not exists road_base_prepped numeric;
+
+-- ============================================================
+-- Dayworks
+-- ============================================================
+-- Hours worked on dayworks (charged on top of the contract rate), logged as
+-- one row per man/machine/activity on a report. Kept in its own table rather
+-- than as columns on reports because a single day can carry several dayworks
+-- lines. Rewritten wholesale when a report is edited, same as machine_hours,
+-- so RLS needs select/insert/delete but no update policy.
+
+create table if not exists public.dayworks (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id),
+  report_id uuid not null references public.reports(id) on delete cascade,
+  log_date date not null,
+  man_name text not null,
+  machine_name text,          -- blank when the activity was hand-dig / no plant
+  hours numeric not null,
+  activity text not null
+);
+
+alter table public.dayworks enable row level security;
+
+create policy "users view own dayworks, admins view all"
+on public.dayworks for select to authenticated
+using (created_by = auth.uid() or public.is_admin());
+
+create policy "users insert own dayworks"
+on public.dayworks for insert to authenticated
+with check (created_by = auth.uid());
+
+create policy "users delete own dayworks, admins delete all"
+on public.dayworks for delete to authenticated
+using (created_by = auth.uid() or public.is_admin());
+
+-- Signed dayworks sheets are attached like any other report file, but kept in
+-- their own kind so they can be listed separately from general supporting docs.
+alter table public.report_files drop constraint if exists report_files_kind_check;
+alter table public.report_files add constraint report_files_kind_check
+  check (kind in ('photo', 'supporting', 'dayworks'));
