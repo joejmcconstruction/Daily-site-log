@@ -483,7 +483,10 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
           value={form.labour_hours}
           onChange={(e) => setField("labour_hours", e.target.value)}
         />
-        <div className="hint">Everyone's full hours, including anyone driving plant — machine hours below are subtracted automatically so driving time isn't paid twice.</div>
+        <div className="hint">
+          Everyone's full hours, including anyone driving plant or on dayworks — machine and daywork hours below are
+          subtracted automatically, so no one's time is counted twice.
+        </div>
         {errors.labour_hours && <div className="hint error">Labour hours is required</div>}
       </div>
 
@@ -597,8 +600,8 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
       <div className="eyebrow">
         Dayworks
         <div className="eyebrow-sub">
-          One row per man and activity carried out on dayworks today (optional). Log daywork hours here only — leave them out
-          of the labour hours and machine hours above, or they'll be counted twice. Upload the signed sheet below.
+          One row per man and activity carried out on dayworks today (optional). Enter the labour and machine hours above as
+          full totals for the day as normal — just say here how much of that time was daywork. Upload the signed sheet below.
         </div>
       </div>
       {dayworks.map((d) => {

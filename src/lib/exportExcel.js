@@ -19,6 +19,9 @@ const KEY_SEP = "|||";
 // 0) — otherwise a driver's hours get paid once on the machine row and again
 // inside the ground-labour total. Example: 7.75hrs entered, 6hrs of that spent
 // driving the 13T Hitachi -> 1.75hrs costed as ground labour for that report.
+// Dayworks (added 2026-09-03) extend the same idea: they're a subset of the day
+// entered on top of the gross totals, and are netted out of contract hours
+// before being costed separately. costingBuckets() below carries the full rule.
 const FUEL_PRICE_PER_LITRE = 1.44; // EUR — from an EUR1440/1000L delivery, ~Aug 2026. Update here when fuel is repriced.
 const FUEL_TANKS_PER_HOUR = 1 / 25; // a full tank lasts 25 hours of machine running time
 const LABOUR_RATE_PER_HOUR = 35; // EUR/hour per man
@@ -90,10 +93,97 @@ function machineHoursByReportId(machineHours) {
   return byReport;
 }
 
-function groundLabourHours(report, machineHoursByReport) {
-  const gross = Number(report.labour_hours) || 0;
-  const driven = machineHoursByReport[report.id] || 0;
-  return Math.max(0, gross - driven);
+// The single source of truth for how one day's hours split into cost buckets —
+// used both by the Cost Report sheet (which turns them into live formulas) and
+// by the Dashboard aggregate (which needs plain numbers to draw charts from).
+//
+// Everything on a report is entered GROSS and dayworks are a subset of the day,
+// not extra on top of it: labour_hours is everyone's full day (driving and
+// dayworks included), each machine row is that machine's full running time
+// (daywork running included), and the daywork rows say how much of that day was
+// spent on daywork. Per report, with
+//   G  = labour_hours            (all man-hours)
+//   M  = machine row hours       (per machine; driver man-hours, included in G)
+//   Dm = daywork hours on a machine   (included in that machine's M)
+//   Dh = daywork hand-work hours      (included in G, not in any M)
+// the buckets are
+//   dayworks         = Dm (fuel + labour) + Dh (labour)
+//   contract machine = M - Dm    per machine, floored at 0
+//   contract labour  = G - M - Dh          floored at 0
+// which add back up to exactly G man-hours and M machine hours. So a crew member
+// enters the day the obvious way — full totals everywhere — and nothing is
+// charged twice or dropped.
+function costingBuckets(reports, machineHours, dayworks, reportById) {
+  function projectOf(reportId) {
+    const r = reportId ? reportById[reportId] : null;
+    return r ? r.project_name || "Unassigned" : "Unassigned";
+  }
+
+  const dwMachineByReportMachine = {};
+  const dwHandByReport = {};
+  dayworks.forEach((d) => {
+    const hrs = Number(d.hours) || 0;
+    if (d.machine_name) {
+      const key = d.report_id + KEY_SEP + d.machine_name;
+      dwMachineByReportMachine[key] = (dwMachineByReportMachine[key] || 0) + hrs;
+    } else {
+      dwHandByReport[d.report_id] = (dwHandByReport[d.report_id] || 0) + hrs;
+    }
+  });
+
+  // Keyed per report AND machine, so daywork time comes off the same machine on
+  // the same day rather than off the project's total.
+  const machineByReportMachine = {};
+  machineHours.forEach((m) => {
+    const key = m.report_id + KEY_SEP + m.machine_name;
+    machineByReportMachine[key] = (machineByReportMachine[key] || 0) + (Number(m.hours) || 0);
+  });
+
+  const projects = new Set();
+  const contractMachineAgg = {};
+  const dayworkMachineAgg = {};
+  const contractLabourAgg = {};
+  const dayworkLabourAgg = {};
+
+  function add(agg, key, hrs) {
+    if (hrs > 0) agg[key] = (agg[key] || 0) + hrs;
+  }
+
+  Object.entries(machineByReportMachine).forEach(([key, hrs]) => {
+    const sep = key.indexOf(KEY_SEP);
+    const reportId = key.slice(0, sep);
+    const machine = key.slice(sep + KEY_SEP.length);
+    const project = projectOf(reportId);
+    projects.add(project);
+    add(contractMachineAgg, project + KEY_SEP + machine, Math.max(0, hrs - (dwMachineByReportMachine[key] || 0)));
+  });
+
+  // Daywork machine hours are costed whether or not the crew also logged a
+  // machine row for that day — the daywork sheet is the authority for them.
+  Object.entries(dwMachineByReportMachine).forEach(([key, hrs]) => {
+    const sep = key.indexOf(KEY_SEP);
+    const project = projectOf(key.slice(0, sep));
+    projects.add(project);
+    add(dayworkMachineAgg, project + KEY_SEP + key.slice(sep + KEY_SEP.length), hrs);
+  });
+
+  Object.entries(dwHandByReport).forEach(([reportId, hrs]) => {
+    const project = projectOf(reportId);
+    projects.add(project);
+    add(dayworkLabourAgg, project, hrs);
+  });
+
+  const machineHoursByReport = machineHoursByReportId(machineHours);
+  reports.forEach((r) => {
+    const project = r.project_name || "Unassigned";
+    projects.add(project);
+    const gross = Number(r.labour_hours) || 0;
+    const driven = machineHoursByReport[r.id] || 0;
+    const dwHand = dwHandByReport[r.id] || 0;
+    add(contractLabourAgg, project, Math.max(0, gross - driven - dwHand));
+  });
+
+  return { projects, contractMachineAgg, dayworkMachineAgg, contractLabourAgg, dayworkLabourAgg };
 }
 
 function applyAutoFilterAndHeaderStyle(ws, colCount, lastRow) {
@@ -205,62 +295,21 @@ function buildRatesSheet(wb) {
   return { ws, tankTableStartRow, tankTableEndRow };
 }
 
-// Splits daywork hours per project into machine hours (a line with a machine —
-// the man was operating it, so those hours carry fuel + labour, exactly like a
-// contract machine row) and hand-work hours (labour only).
-function dayworkAggregates(dayworks, reportById) {
-  const machineAgg = {};
-  const labourAgg = {};
-  const projects = new Set();
-  dayworks.forEach((d) => {
-    const report = d.report_id ? reportById[d.report_id] : null;
-    const project = report ? report.project_name || "Unassigned" : "Unassigned";
-    projects.add(project);
-    const hrs = Number(d.hours) || 0;
-    if (d.machine_name) {
-      const key = project + KEY_SEP + d.machine_name;
-      machineAgg[key] = (machineAgg[key] || 0) + hrs;
-    } else {
-      labourAgg[project] = (labourAgg[project] || 0) + hrs;
-    }
-  });
-  return { machineAgg, labourAgg, projects };
-}
-
 // Cost Report: hours are pulled in automatically per project/machine (and labour).
 // Fuel cost = hours x (1/25) x tank capacity x fuel price (25 hours of running
 // time uses one full tank). Labour cost = hours x labour rate. A machine's
 // Total Cost is fuel + labour for the hours it ran; a "Labour" row is
-// ground-staff hours only (no fuel) — netted down per report via
-// groundLabourHours() so a driver's operating hours aren't double-counted.
-// Every row is tagged Contract or Dayworks in the Type column so the two can be
-// filtered apart and are totalled separately per project. Daywork hours are
-// assumed to be logged ONLY in the dayworks rows — the form tells the crew not
-// to include them in the report's Labour hours or machine rows, so nothing here
-// nets them out.
+// ground-staff hours only (no fuel). Every row is tagged Contract or Dayworks in
+// the Type column so the two can be filtered apart and are totalled separately
+// per project. All the netting that keeps an hour from being charged twice —
+// driving time out of ground labour, daywork time out of contract — happens in
+// costingBuckets().
 function buildCostReportSheet(wb, reports, machineHours, dayworks, reportById, ratesRange) {
-  const machineAgg = {};
-  const machineProjects = new Set();
-  machineHours.forEach((m) => {
-    const report = m.report_id ? reportById[m.report_id] : null;
-    const project = report ? report.project_name || "Unassigned" : "Unassigned";
-    machineProjects.add(project);
-    const key = project + KEY_SEP + m.machine_name;
-    machineAgg[key] = (machineAgg[key] || 0) + (Number(m.hours) || 0);
-  });
-
-  const machineHoursByReport = machineHoursByReportId(machineHours);
-  const labourAgg = {};
-  reports.forEach((r) => {
-    const project = r.project_name || "Unassigned";
-    labourAgg[project] = (labourAgg[project] || 0) + groundLabourHours(r, machineHoursByReport);
-  });
-
-  const dw = dayworkAggregates(dayworks, reportById);
+  const buckets = costingBuckets(reports, machineHours, dayworks, reportById);
 
   const projectOrder = [...PROJECT_OPTIONS];
   const seen = new Set(projectOrder);
-  [...Object.keys(labourAgg), ...machineProjects, ...dw.projects].forEach((p) => {
+  buckets.projects.forEach((p) => {
     if (!seen.has(p)) {
       seen.add(p);
       projectOrder.push(p);
@@ -270,17 +319,17 @@ function buildCostReportSheet(wb, reports, machineHours, dayworks, reportById, r
   const costRows = [];
   projectOrder.forEach((project) => {
     MACHINE_OPTIONS.forEach((machine) => {
-      const hrs = machineAgg[project + KEY_SEP + machine];
+      const hrs = buckets.contractMachineAgg[project + KEY_SEP + machine];
       if (hrs) costRows.push({ project, type: "Contract", item: machine, hours: Number(hrs.toFixed(2)) });
     });
-    const labHrs = labourAgg[project];
+    const labHrs = buckets.contractLabourAgg[project];
     if (labHrs) costRows.push({ project, type: "Contract", item: "Labour", hours: Number(labHrs.toFixed(2)) });
 
     MACHINE_OPTIONS.forEach((machine) => {
-      const hrs = dw.machineAgg[project + KEY_SEP + machine];
+      const hrs = buckets.dayworkMachineAgg[project + KEY_SEP + machine];
       if (hrs) costRows.push({ project, type: "Dayworks", item: machine, hours: Number(hrs.toFixed(2)) });
     });
-    const dwLabHrs = dw.labourAgg[project];
+    const dwLabHrs = buckets.dayworkLabourAgg[project];
     if (dwLabHrs) costRows.push({ project, type: "Dayworks", item: "Labour", hours: Number(dwLabHrs.toFixed(2)) });
   });
 
@@ -383,42 +432,32 @@ function aggregateForDashboard(reports, machineHours, dayworks, reportById) {
     return byProject[p];
   }
 
-  const machineHoursByReport = machineHoursByReportId(machineHours);
   reports.forEach((r) => {
     const b = bucket(r.project_name || "Unassigned");
     b.reportCount += 1;
     b.trenchExcavated += Number(r.trench_excavated) || 0;
     b.trenchBackfilled += Number(r.trench_backfilled) || 0;
-    b.labourHoursGround += groundLabourHours(r, machineHoursByReport);
   });
 
-  const machineHoursByProjectMachine = {};
-  machineHours.forEach((m) => {
-    const report = m.report_id ? reportById[m.report_id] : null;
-    const p = report ? report.project_name || "Unassigned" : "Unassigned";
-    bucket(p);
-    const key = p + KEY_SEP + m.machine_name;
-    machineHoursByProjectMachine[key] = (machineHoursByProjectMachine[key] || 0) + (Number(m.hours) || 0);
-  });
-
-  // Dayworks are costed on the same rules as contract work, but kept in their
-  // own bucket so the chart and KPIs can show what's chargeable on top.
-  const dw = dayworkAggregates(dayworks, reportById);
-  dw.projects.forEach((p) => bucket(p));
+  // Same buckets the Cost Report sheet is built from, so the two can't drift.
+  const buckets = costingBuckets(reports, machineHours, dayworks, reportById);
+  buckets.projects.forEach((p) => bucket(p));
 
   projectOrder.forEach((p) => {
     const b = bucket(p);
+    b.labourHoursGround = buckets.contractLabourAgg[p] || 0;
     MACHINE_OPTIONS.forEach((machine) => {
-      const hrs = machineHoursByProjectMachine[p + KEY_SEP + machine] || 0;
-      b.machineHours += hrs;
       const tank = machine in KNOWN_TANK_CAPACITY_L ? KNOWN_TANK_CAPACITY_L[machine] : 0;
+
+      const hrs = buckets.contractMachineAgg[p + KEY_SEP + machine] || 0;
+      b.machineHours += hrs;
       b.fuelCost += hrs * FUEL_TANKS_PER_HOUR * tank * FUEL_PRICE_PER_LITRE;
 
-      const dwHrs = dw.machineAgg[p + KEY_SEP + machine] || 0;
+      const dwHrs = buckets.dayworkMachineAgg[p + KEY_SEP + machine] || 0;
       b.dayworkHours += dwHrs;
       b.dayworksCost += dwHrs * FUEL_TANKS_PER_HOUR * tank * FUEL_PRICE_PER_LITRE + dwHrs * LABOUR_RATE_PER_HOUR;
     });
-    const dwHandHrs = dw.labourAgg[p] || 0;
+    const dwHandHrs = buckets.dayworkLabourAgg[p] || 0;
     b.dayworkHours += dwHandHrs;
     b.dayworksCost += dwHandHrs * LABOUR_RATE_PER_HOUR;
 
@@ -529,7 +568,7 @@ function buildDashboardSheet(wb, reports, machineHours, dayworks, reportById) {
     "Regenerated automatically every time a report is submitted or deleted — always current with live data. Charts are pictures, redrawn on every regeneration, not native Excel charts reactive to manual cell edits.",
     "Fuel rule: a machine run 5 hrs/day empties a full tank every 5 days -> 25 hours of running time uses one full tank -> 1/25 tank per hour, at the price on the Rates sheet.",
     "Labour rate is on the Rates sheet. \"Labour hours\" on a report is everyone's gross total for the day — that report's machine hours are automatically subtracted before it's costed as ground labour, so a driver's hours aren't paid twice (e.g. 7.75hrs entered, 6hrs driving -> 1.75hrs costed as ground labour).",
-    "Dayworks are costed on the same fuel and labour rules as contract work, but tagged separately: the Cost Report's Type column splits Contract from Dayworks and totals each per project, and the cost chart shows Dayworks as its own band. A daywork line with a machine carries fuel + labour for those hours; a hand-work line is labour only. IMPORTANT: this assumes daywork hours are logged ONLY in the Dayworks section — the form tells the crew not to also include them in Labour hours or a machine row, otherwise they'd be counted twice. The full detail, and which signed sheet backs each line, is on the Dayworks sheet and in the app.",
+    "Dayworks are costed on the same fuel and labour rules as contract work, but tagged separately: the Cost Report's Type column splits Contract from Dayworks and totals each per project, and the cost chart shows Dayworks as its own band. A daywork line with a machine carries fuel + labour for those hours; a hand-work line is labour only. Daywork hours are treated as a subset of the day, not extra on top — the crew enter full totals in Labour hours and the machine rows as normal, and daywork time is subtracted from those before the contract side is costed, so an hour is never charged twice. Contract + Dayworks hours always add back up to the day's gross. The line-by-line detail behind each charge is on the Dayworks sheet, and the signed sheet is attached to its report in the app.",
     'Machine tank capacities on the Rates sheet: "13T Hitachi" and Kubota are Joe\'s own figures; the rest were looked up online on 2026-08-17. Several are marked ASSUMPTION/AVERAGE in code comments (src/lib/exportExcel.js) where no exact spec was found or the model name was ambiguous — check those against the real machines and let me know any corrections.',
   ];
   notes.forEach((note, i) => {
