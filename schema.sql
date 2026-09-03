@@ -572,3 +572,35 @@ using (created_by = auth.uid() or public.is_admin());
 alter table public.report_files drop constraint if exists report_files_kind_check;
 alter table public.report_files add constraint report_files_kind_check
   check (kind in ('photo', 'supporting', 'dayworks'));
+
+-- ============================================================
+-- Lock the export workbook to admins only
+-- ============================================================
+-- The workbook carries cost figures, so crew accounts must not be able to read
+-- it — until now any signed-in user could, and only the absence of a link in
+-- the app kept them out. Writing is admin-only too, which fixes a real bug:
+-- syncExcelExport() rebuilds the file in the browser from whatever the caller
+-- can read, and RLS limits a crew account to its OWN reports, so every crew
+-- submission was overwriting the complete workbook with a partial one. The app
+-- now skips the sync for non-admins and re-runs it when an admin opens it.
+-- Downloading from the Supabase Dashboard is unaffected — that bypasses RLS.
+
+drop policy if exists "authenticated users can read export files" on storage.objects;
+drop policy if exists "authenticated users can write export files" on storage.objects;
+drop policy if exists "authenticated users can update export files" on storage.objects;
+
+drop policy if exists "admins can read export files" on storage.objects;
+create policy "admins can read export files"
+  on storage.objects for select to authenticated
+  using (bucket_id = 'reports-export' and public.is_admin());
+
+drop policy if exists "admins can write export files" on storage.objects;
+create policy "admins can write export files"
+  on storage.objects for insert to authenticated
+  with check (bucket_id = 'reports-export' and public.is_admin());
+
+drop policy if exists "admins can update export files" on storage.objects;
+create policy "admins can update export files"
+  on storage.objects for update to authenticated
+  using (bucket_id = 'reports-export' and public.is_admin())
+  with check (bucket_id = 'reports-export' and public.is_admin());

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { ClipboardList, CalendarDays, LogOut, Loader2, BarChart3, ShieldCheck, Users } from "lucide-react";
 import { supabase } from "./supabaseClient";
+import { syncExcelExport } from "./lib/exportExcel";
 import Login from "./components/Login";
 import NewReportForm from "./components/NewReportForm";
 import HistoryList from "./components/HistoryList";
@@ -42,6 +43,14 @@ export default function App() {
       cancelled = true;
     };
   }, [session]);
+
+  // Crew submissions can't refresh the export workbook (they'd write a partial
+  // one, and the bucket is admin-only), so it's regenerated whenever an admin
+  // opens the app — that's what keeps it current with everyone's reports.
+  useEffect(() => {
+    if (!isAdmin) return;
+    syncExcelExport().catch((err) => console.error("Excel export sync failed:", err));
+  }, [isAdmin]);
 
   if (session === undefined) {
     return (

@@ -567,7 +567,25 @@ export function buildWorkbook(data) {
 // Regenerates the full workbook from the live data and overwrites the one
 // private file in Supabase Storage. Called automatically after a report is
 // submitted or deleted — there's no export button in the app.
+async function currentUserIsAdmin() {
+  const { data: userData } = await supabase.auth.getUser();
+  const uid = userData?.user?.id;
+  if (!uid) return false;
+  // Same check the app uses for its admin tabs: admin_users is readable only by
+  // admins, so a crew account gets an empty result rather than an error.
+  const { data } = await supabase.from("admin_users").select("user_id").eq("user_id", uid).maybeSingle();
+  return !!data;
+}
+
 export async function syncExcelExport() {
+  // Non-admins skip the sync entirely, for two reasons. The workbook is rebuilt
+  // from whatever the caller can read, and RLS limits a crew account to its own
+  // reports — so a crew-triggered sync would overwrite the complete workbook
+  // with a partial one. And since the export bucket is admin-only, the upload
+  // would be refused anyway. Consequence: the file refreshes when an admin uses
+  // the app (App.jsx syncs on load), not the moment a foreman files a report.
+  if (!(await currentUserIsAdmin())) return;
+
   const [reportsRes, machineRes, dayworksRes] = await Promise.all([
     supabase.from("reports").select("*"),
     supabase.from("machine_hours").select("*"),
