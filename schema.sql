@@ -550,14 +550,19 @@ create table if not exists public.dayworks (
 
 alter table public.dayworks enable row level security;
 
+-- Dropped first so this whole block can be re-run safely — create policy has no
+-- "if not exists" form and errors out on a second run otherwise.
+drop policy if exists "users view own dayworks, admins view all" on public.dayworks;
 create policy "users view own dayworks, admins view all"
 on public.dayworks for select to authenticated
 using (created_by = auth.uid() or public.is_admin());
 
+drop policy if exists "users insert own dayworks" on public.dayworks;
 create policy "users insert own dayworks"
 on public.dayworks for insert to authenticated
 with check (created_by = auth.uid());
 
+drop policy if exists "users delete own dayworks, admins delete all" on public.dayworks;
 create policy "users delete own dayworks, admins delete all"
 on public.dayworks for delete to authenticated
 using (created_by = auth.uid() or public.is_admin());
