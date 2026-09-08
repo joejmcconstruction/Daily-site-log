@@ -49,7 +49,7 @@ export const REVIEW_CONFIDENCE_THRESHOLD = 0.75;
 
 // Vercel serverless functions refuse request bodies over 4.5 MB, and base64
 // adds a third, so anything bigger is stored but has to be typed in by hand.
-export const MAX_DOCKET_READ_BYTES = 3.3 * 1024 * 1024;
+export const MAX_DOCKET_READ_BYTES = 3 * 1024 * 1024;
 
 // Dockets are photographed at arm's length with small print and handwritten
 // tonnages, so keep more detail than the report photos get.
@@ -350,14 +350,23 @@ export function rowPatchFromForm(form) {
   };
 }
 
+// RLS silently filters out rows the caller may not touch (no error, zero rows
+// affected), so both of these select the affected id back and treat an empty
+// result as a refusal rather than reporting success.
 export async function updateDelivery(id, patch) {
-  const { error } = await supabase.from("deliveries").update(patch).eq("id", id);
+  const { data, error } = await supabase.from("deliveries").update(patch).eq("id", id).select("id");
   if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error("You can only change lines you logged yourself. Ask an admin to change this one.");
+  }
 }
 
 export async function deleteDelivery(row) {
-  const { error } = await supabase.from("deliveries").delete().eq("id", row.id);
+  const { data, error } = await supabase.from("deliveries").delete().eq("id", row.id).select("id");
   if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error("You can only delete lines you logged yourself. Ask an admin to delete this one.");
+  }
   // Only remove the photo once no other line still points at it.
   if (row.docket_path) {
     const { count } = await supabase

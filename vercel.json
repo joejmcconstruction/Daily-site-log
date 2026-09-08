@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/read-docket.js": {
+      "maxDuration": 60
+    }
+  }
+}

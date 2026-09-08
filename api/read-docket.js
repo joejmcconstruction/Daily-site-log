@@ -153,7 +153,9 @@ export default async function handler(req, res) {
       max_tokens: 16000,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: [fileBlock, { type: "text", text: userText }] }],
-      output_config: { format: { type: "json_schema", schema: DOCKET_SCHEMA } },
+      // Medium effort: extraction doesn't need deep reasoning, and the person
+      // is standing at the gate waiting for the card to fill in.
+      output_config: { effort: "medium", format: { type: "json_schema", schema: DOCKET_SCHEMA } },
     });
 
     if (response.stop_reason === "refusal") {

@@ -98,7 +98,7 @@ export function buildDeliveriesSheets(wb, deliveries) {
     rows.forEach((d, i) => {
       const r = i + 2;
       ws.getCell(`${COL.date}${r}`).numFmt = "dd/mm/yyyy";
-      ws.getCell(`${COL.qty}${r}`).numFmt = "#,##0.##";
+      ws.getCell(`${COL.qty}${r}`).numFmt = "#,##0.00";
       if (d.docket_path) {
         const cell = ws.getCell(`${COL.docket}${r}`);
         cell.value = { text: "Open", hyperlink: docketUrl(d.docket_path) };
@@ -108,7 +108,7 @@ export function buildDeliveriesSheets(wb, deliveries) {
         ws.getCell(`${COL.check}${r}`).font = { bold: true, color: { argb: "FFB8862C" } };
       }
     });
-    ws.getCell(`${COL.qty}${rows.length + 2}`).numFmt = "#,##0.##";
+    ws.getCell(`${COL.qty}${rows.length + 2}`).numFmt = "#,##0.00";
   }
 
   buildDeliverySummarySheet(wb, rows);
@@ -162,15 +162,20 @@ function commonUnit(rows, product) {
 
 const HEADER_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEF1F7" } };
 
-function monthCriteria(D, m) {
-  return `${D}$${COL.date}:$${COL.date},">="&DATE(${m.y},${m.m},1),${D}$${COL.date}:$${COL.date},"<"&DATE(${m.y},${m.m + 1},1)`;
+// Formula ranges start at row 2 so the header row is never counted: a whole-
+// column COUNTIF(...,"?*") would count the "Product" header, and COUNTIF is
+// case-insensitive so "Check" would match "CHECK".
+const D = "Deliveries!";
+const rng = (col) => `${D}$${col}$2:$${col}$1048576`;
+
+function monthCriteria(m) {
+  return `${rng(COL.date)},">="&DATE(${m.y},${m.m},1),${rng(COL.date)},"<"&DATE(${m.y},${m.m + 1},1)`;
 }
 
 // Live SUMIFS/COUNTIFS over the Deliveries sheet, so a correction typed into
 // the register in Excel flows through without regenerating the file.
 function buildDeliverySummarySheet(wb, rows) {
   const ws = wb.addWorksheet("Delivery Summary", { views: [{ showGridLines: false }] });
-  const D = "Deliveries!";
   ws.getColumn(1).width = 34;
   ws.getColumn(2).width = 10;
 
@@ -180,10 +185,10 @@ function buildDeliverySummarySheet(wb, rows) {
   ws.getCell("A2").font = { italic: true, color: { argb: "FF5B6478" } };
 
   const kpis = [
-    ["Delivery lines logged", `COUNTIF(${D}$${COL.product}:$${COL.product},"?*")`],
-    ["Flagged for checking", `COUNTIF(${D}$${COL.check}:$${COL.check},"CHECK")`],
-    ["Not yet matched to an invoice", `COUNTIFS(${D}$${COL.product}:$${COL.product},"?*",${D}$${COL.invoice}:$${COL.invoice},"")`],
-    ["Queried or rejected", `COUNTIF(${D}$${COL.status}:$${COL.status},"queried")+COUNTIF(${D}$${COL.status}:$${COL.status},"rejected")`],
+    ["Delivery lines logged", `COUNTIF(${rng(COL.product)},"?*")`],
+    ["Flagged for checking", `COUNTIF(${rng(COL.check)},"CHECK")`],
+    ["Not yet matched to an invoice", `COUNTIFS(${rng(COL.product)},"?*",${rng(COL.invoice)},"")`],
+    ["Queried or rejected", `COUNTIF(${rng(COL.status)},"queried")+COUNTIF(${rng(COL.status)},"rejected")`],
   ];
   kpis.forEach(([label, formula], i) => {
     const r = 4 + i;
@@ -224,13 +229,13 @@ function buildDeliverySummarySheet(wb, rows) {
     months.forEach((m, i) => {
       const cell = ws.getCell(`${colLetter(firstMonthCol + i)}${r}`);
       cell.value = {
-        formula: `SUMIFS(${D}$${COL.qty}:$${COL.qty},${D}$${COL.product}:$${COL.product},$A${r},${monthCriteria(D, m)})`,
+        formula: `SUMIFS(${rng(COL.qty)},${rng(COL.product)},$A${r},${monthCriteria(m)})`,
       };
-      cell.numFmt = "#,##0.##";
+      cell.numFmt = "#,##0.00";
     });
     const total = ws.getCell(`${colLetter(totalCol)}${r}`);
     total.value = { formula: `SUM(${colLetter(firstMonthCol)}${r}:${colLetter(lastMonthCol)}${r})` };
-    total.numFmt = "#,##0.##";
+    total.numFmt = "#,##0.00";
     total.font = { bold: true };
     r += 1;
   });
@@ -252,7 +257,7 @@ function buildDeliverySummarySheet(wb, rows) {
     const criteria = s ? `$A${r}` : `""`;
     months.forEach((m, i) => {
       ws.getCell(`${colLetter(firstMonthCol + i)}${r}`).value = {
-        formula: `COUNTIFS(${D}$${COL.supplier}:$${COL.supplier},${criteria},${monthCriteria(D, m)})`,
+        formula: `COUNTIFS(${rng(COL.supplier)},${criteria},${monthCriteria(m)})`,
       };
     });
     const total = ws.getCell(`${colLetter(totalCol)}${r}`);

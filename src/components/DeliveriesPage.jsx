@@ -651,6 +651,7 @@ function DeliveryRow({ row, onChanged, onFlash }) {
     } catch (error) {
       console.error(error);
       setErr(error.message || "Couldn't delete this delivery.");
+    } finally {
       setBusy(false);
     }
   }
