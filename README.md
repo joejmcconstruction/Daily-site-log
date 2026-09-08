@@ -94,6 +94,45 @@ If you'd rather have `sitelog.yourcompany.com` than the free `.vercel.app` addre
 
 ---
 
+## 9. Dockets & deliveries (automatic docket reading)
+
+The **Dockets** tab lets anyone on site photograph a delivery docket at the gate.
+Claude reads the docket number, supplier, date, materials and quantities, and the
+app prefills a delivery for you to check and save. Every saved delivery lands on the
+**Deliveries** sheet (a filterable Excel table) and the **Delivery Summary** sheet
+(quantities by product and month, lines by supplier, live formulas) of the export
+workbook. The tab also has its own **Excel** button that downloads just the
+register for whatever filter is showing — handy for sending to a QS.
+
+Setup, once:
+
+1. In Supabase → SQL Editor, run the **Deliveries & dockets** block at the bottom of
+   `schema.sql` (it's safe to re-run).
+2. Get an API key at [console.anthropic.com](https://console.anthropic.com) →
+   Settings → API keys.
+3. In Vercel → your project → **Settings → Environment Variables**, add
+   `ANTHROPIC_API_KEY` with that key for all environments, then **Redeploy**.
+   `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` must be there too (they are if
+   the app already deploys) — the reader uses them to check the caller is signed in.
+
+How it works:
+
+- Reading runs in `api/read-docket.js`, a Vercel serverless function deployed
+  automatically with the app, so the key never reaches the browser.
+- Each docket costs roughly 1–3 cent to read at Claude Opus 5 rates.
+- A docket with several product lines becomes several delivery lines sharing one
+  photo. Anything the reader can't make out is left blank and the delivery is
+  flagged **Check** so it gets compared with the paper docket later.
+- Photos are shrunk to 2000px before upload. PDFs over about 3 MB are still stored
+  but have to be typed in by hand (Vercel's request size limit).
+- The supplier and product pick lists live in `src/lib/deliveries.js`
+  (`SUPPLIER_OPTIONS`, `DELIVERY_PRODUCT_OPTIONS`). Free text is always allowed;
+  the lists just make the common ones a tap away and give the reader names to snap to.
+- Dockets are stored in a public-by-URL `dockets` bucket, same as report photos, so
+  the **Open** links in the Excel export keep working.
+
+---
+
 ## Notes
 
 - **Photos** are compressed in the browser before upload to keep storage and mobile

@@ -604,3 +604,90 @@ create policy "admins can update export files"
   on storage.objects for update to authenticated
   using (bucket_id = 'reports-export' and public.is_admin())
   with check (bucket_id = 'reports-export' and public.is_admin());
+
+-- ============================================================
+-- Deliveries & dockets
+-- ============================================================
+-- One row per material line on a delivery docket (a docket with two products
+-- becomes two rows sharing a docket_group and the same photo). Filled in by the
+-- docket reader (api/read-docket.js) and checked by whoever is at the gate.
+-- Any signed-in user can see the whole register (it carries no rates), but
+-- only the person who logged a line, or an admin, can change or delete it.
+-- Re-runnable: policies are dropped before being created.
+
+create table if not exists public.deliveries (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id),
+  delivery_date date not null,
+  docket_no text,
+  supplier text,
+  haulier text,
+  product text not null,
+  quantity numeric,
+  unit text,
+  vehicle_reg text,
+  po_number text,
+  project_name text,
+  location text,              -- where on site it went, e.g. "Unit 2 slab"
+  invoice_ref text,           -- supplier invoice this docket was matched to
+  status text not null default 'received' check (status in ('received', 'queried', 'rejected')),
+  needs_review boolean not null default false,  -- flagged to check against the paper docket
+  notes text,
+  docket_path text,           -- path in the public 'dockets' bucket
+  docket_file_name text,
+  docket_group text,          -- shared by lines read off the same docket
+  extraction jsonb            -- raw fields the reader returned, kept for audit
+);
+
+create index if not exists deliveries_delivery_date_idx on public.deliveries (delivery_date desc);
+
+alter table public.deliveries enable row level security;
+
+drop policy if exists "authenticated users can read deliveries" on public.deliveries;
+create policy "authenticated users can read deliveries"
+on public.deliveries for select to authenticated
+using (true);
+
+drop policy if exists "users insert own deliveries" on public.deliveries;
+create policy "users insert own deliveries"
+on public.deliveries for insert to authenticated
+with check (created_by = auth.uid());
+
+drop policy if exists "users update own deliveries, admins update all" on public.deliveries;
+create policy "users update own deliveries, admins update all"
+on public.deliveries for update to authenticated
+using (created_by = auth.uid() or public.is_admin())
+with check (created_by = auth.uid() or public.is_admin());
+
+drop policy if exists "users delete own deliveries, admins delete all" on public.deliveries;
+create policy "users delete own deliveries, admins delete all"
+on public.deliveries for delete to authenticated
+using (created_by = auth.uid() or public.is_admin());
+
+-- Docket photos/PDFs. Public bucket, same reasoning as site-reports: the URL is
+-- a long random path, and a public URL means the "Open" links in the Excel
+-- export keep working instead of expiring like signed URLs would.
+insert into storage.buckets (id, name, public)
+values ('dockets', 'dockets', true)
+on conflict (id) do nothing;
+
+drop policy if exists "authenticated users can upload dockets" on storage.objects;
+create policy "authenticated users can upload dockets"
+  on storage.objects for insert to authenticated
+  with check (bucket_id = 'dockets');
+
+drop policy if exists "authenticated users can read dockets" on storage.objects;
+create policy "authenticated users can read dockets"
+  on storage.objects for select to authenticated
+  using (bucket_id = 'dockets');
+
+drop policy if exists "anyone can view dockets via public url" on storage.objects;
+create policy "anyone can view dockets via public url"
+  on storage.objects for select to anon
+  using (bucket_id = 'dockets');
+
+drop policy if exists "authenticated users can delete dockets" on storage.objects;
+create policy "authenticated users can delete dockets"
+  on storage.objects for delete to authenticated
+  using (bucket_id = 'dockets');

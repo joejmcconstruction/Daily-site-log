@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ClipboardList, CalendarDays, LogOut, Loader2, BarChart3, ShieldCheck, Users } from "lucide-react";
+import { ClipboardList, CalendarDays, LogOut, Loader2, BarChart3, ShieldCheck, Users, Truck } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import { syncExcelExport } from "./lib/exportExcel";
 import Login from "./components/Login";
@@ -9,6 +9,7 @@ import ReportDetail from "./components/ReportDetail";
 import Dashboard from "./components/Dashboard";
 import CertsPage from "./components/admin/CertsPage";
 import StaffPage from "./components/admin/StaffPage";
+import DeliveriesPage from "./components/DeliveriesPage";
 
 const PROJECT_NAME = import.meta.env.VITE_PROJECT_NAME || "Site Daily Report";
 
@@ -89,6 +90,7 @@ export default function App() {
           {tab === "new" && !detailId && <NewReportForm onSubmitted={() => setHistoryRefreshKey((k) => k + 1)} />}
           {tab === "dashboard" && !detailId && <Dashboard />}
           {tab === "history" && !detailId && <HistoryList refreshKey={historyRefreshKey} onOpen={setDetailId} />}
+          {tab === "deliveries" && !detailId && <DeliveriesPage />}
           {tab === "certs" && !detailId && isAdmin && <CertsPage />}
           {tab === "staff" && !detailId && isAdmin && <StaffPage />}
           {detailId && (
@@ -117,6 +119,10 @@ export default function App() {
             <button className={`nav-btn ${tab === "history" ? "active" : ""}`} onClick={goHistory}>
               <CalendarDays size={20} strokeWidth={tab === "history" ? 2.4 : 2} />
               <span>History</span>
+            </button>
+            <button className={`nav-btn ${tab === "deliveries" ? "active" : ""}`} onClick={() => setTab("deliveries")}>
+              <Truck size={20} strokeWidth={tab === "deliveries" ? 2.4 : 2} />
+              <span>Dockets</span>
             </button>
             {isAdmin && (
               <button className={`nav-btn ${tab === "certs" ? "active" : ""}`} onClick={() => setTab("certs")}>

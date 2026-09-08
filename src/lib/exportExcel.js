@@ -2,6 +2,7 @@ import ExcelJS from "exceljs/dist/exceljs.min.js";
 import { supabase } from "../supabaseClient";
 import { PROJECT_OPTIONS, MACHINE_OPTIONS } from "./helpers";
 import { renderPieChart, renderGroupedBarChart, renderStackedBarChart } from "./dashboardCharts";
+import { buildDeliveriesSheets } from "./deliveriesExcel";
 
 const EXPORT_BUCKET = "reports-export";
 const EXPORT_FILE = "site-daily-report.xlsx";
@@ -599,6 +600,8 @@ export function buildWorkbook(data) {
   buildDayworksSheet(wb, dayworks, reportById);
   const ratesResult = buildRatesSheet(wb);
   buildCostReportSheet(wb, reports, machineHours, dayworks, reportById, ratesResult);
+  buildDeliveriesSheets(wb, data.deliveries || []);
+  wb.calcProperties.fullCalcOnLoad = true;
 
   return wb;
 }
@@ -625,19 +628,22 @@ export async function syncExcelExport() {
   // the app (App.jsx syncs on load), not the moment a foreman files a report.
   if (!(await currentUserIsAdmin())) return;
 
-  const [reportsRes, machineRes, dayworksRes] = await Promise.all([
+  const [reportsRes, machineRes, dayworksRes, deliveriesRes] = await Promise.all([
     supabase.from("reports").select("*"),
     supabase.from("machine_hours").select("*"),
     supabase.from("dayworks").select("*"),
+    supabase.from("deliveries").select("*"),
   ]);
   if (reportsRes.error) throw reportsRes.error;
   if (machineRes.error) throw machineRes.error;
   if (dayworksRes.error) throw dayworksRes.error;
+  if (deliveriesRes.error) throw deliveriesRes.error;
 
   const wb = buildWorkbook({
     reports: reportsRes.data || [],
     machineHours: machineRes.data || [],
     dayworks: dayworksRes.data || [],
+    deliveries: deliveriesRes.data || [],
   });
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: XLSX_MIME });
