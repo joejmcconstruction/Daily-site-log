@@ -19,6 +19,11 @@ const DOCKET_SCHEMA = {
   type: "object",
   additionalProperties: false,
   properties: {
+    transcript: {
+      type: "string",
+      description:
+        "FIRST: every piece of text you can read on the docket, top to bottom, as printed — labels, numbers, handwriting, stamps. One line per printed line. Fill this before any other field.",
+    },
     is_docket: { type: "boolean", description: "False if the file is not a delivery docket / ticket / delivery note at all." },
     docket_no: { ...nullable("string"), description: "Printed docket, ticket or delivery-note number." },
     supplier: { ...nullable("string"), description: "Company that issued the docket (letterhead)." },
@@ -48,6 +53,7 @@ const DOCKET_SCHEMA = {
     notes: { ...nullable("string"), description: "Anything else worth telling the person entering the delivery." },
   },
   required: [
+    "transcript",
     "is_docket",
     "docket_no",
     "supplier",
@@ -66,6 +72,13 @@ const DOCKET_SCHEMA = {
 
 const SYSTEM_PROMPT = `You read delivery dockets from Irish construction sites — quarry weighbridge tickets, readymix concrete delivery notes, builders' merchant delivery notes, pipe and ducting delivery notes — and return the fields as JSON so they can be entered into a delivery register.
 
+Work in two passes. First, transcribe everything printed or written on the docket into the transcript field, line by line, exactly as it appears, including field labels. Second, fill in the other fields from your transcript. A value that appears in your transcript must not be returned as null.
+
+Where things usually are:
+- The docket number is normally the most prominent number near the top, labelled Docket No, Ticket No, Delivery Note, DN, Del. Note, Doc No, or just No. It is often pre-printed in red or bold. Read it even if it has letters in it.
+- The supplier is the company name in the letterhead or logo at the top.
+- The customer or delivery address block is usually below that; the product lines are in the middle, in a table or as a list; the weights, driver signature and time are near the bottom.
+
 How to read them:
 - Dates are day/month/year. "03/09/2026" is 3 September 2026. Return delivery_date as YYYY-MM-DD.
 - The quantity is what was delivered. On a weighbridge ticket that is the NET weight (gross minus tare), never the gross. Concrete dockets give cubic metres. Pipe, duct, kerb and merchant dockets give lengths or counts.
@@ -73,7 +86,7 @@ How to read them:
 - A docket can carry several product lines; return one item per line. Put the docket's own wording in raw_description and a short clean name in product. If the material clearly matches one of the known product names supplied by the user, use that exact name; otherwise keep a sensible short name from the docket.
 - supplier is the company that issued the docket (the letterhead). haulier is a separate transport company only if one is shown.
 - docket_no is the printed ticket / docket / delivery-note number — not the order number, customer account, weighbridge ID or batch number.
-- Never guess. A field that is missing or unreadable is null, with a short warning saying what could not be read. Legible handwriting counts as readable.
+- Read what is there. Return null only when a field is genuinely absent from the docket or truly illegible, and add a short warning saying which. Do not withhold a value just because you are not certain which label it belongs under — return your best reading and note the doubt in warnings. Legible handwriting counts as readable.
 - confidence is your overall confidence, 0 to 1, that these fields could go straight into the register without being checked against the paper docket. Handwritten quantities, faded thermal prints and photos taken at an angle should lower it.
 - If the file is not a delivery docket at all, set is_docket to false, leave the other fields null or empty, and say what it appears to be in notes.`;
 
@@ -153,9 +166,7 @@ export default async function handler(req, res) {
       max_tokens: 16000,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: [fileBlock, { type: "text", text: userText }] }],
-      // Medium effort: extraction doesn't need deep reasoning, and the person
-      // is standing at the gate waiting for the card to fill in.
-      output_config: { effort: "medium", format: { type: "json_schema", schema: DOCKET_SCHEMA } },
+      output_config: { format: { type: "json_schema", schema: DOCKET_SCHEMA } },
     });
 
     if (response.stop_reason === "refusal") {
@@ -172,8 +183,24 @@ export default async function handler(req, res) {
       .join("");
     const docket = safeParse(text);
     if (!docket || typeof docket !== "object") {
+      console.error("read-docket: unparseable output", text.slice(0, 500));
       return res.status(502).json({ error: "The reader returned something that wasn't a docket record." });
     }
+    // Visible in Vercel > Logs, for working out why a docket read badly.
+    console.log(
+      "read-docket:",
+      JSON.stringify({
+        user: user.email,
+        media_type: mediaType,
+        bytes: Math.round((data.length * 3) / 4),
+        docket_no: docket.docket_no,
+        supplier: docket.supplier,
+        items: Array.isArray(docket.items) ? docket.items.length : 0,
+        confidence: docket.confidence,
+        transcript_chars: (docket.transcript || "").length,
+        warnings: docket.warnings,
+      })
+    );
 
     return res.status(200).json({
       docket,

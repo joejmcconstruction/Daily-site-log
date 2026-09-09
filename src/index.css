@@ -1136,3 +1136,31 @@ select.input {
   border-top: 1px solid var(--border);
   padding: 12px;
 }
+
+.transcript {
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+
+.transcript summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--accent);
+  padding: 4px 0;
+}
+
+.transcript pre {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text);
+  max-height: 260px;
+  overflow-y: auto;
+}

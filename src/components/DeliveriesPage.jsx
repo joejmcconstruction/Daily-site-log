@@ -553,6 +553,12 @@ function DraftCard({ draft, onChange, onSave, onRemove }) {
               ))}
             </div>
           )}
+          {draft.docket && (
+            <details className="transcript">
+              <summary>What the reader saw on the docket</summary>
+              <pre>{draft.docket.transcript?.trim() || "(nothing legible)"}</pre>
+            </details>
+          )}
 
           <HeaderFields value={draft.header} errors={errors} onChange={setHeader} />
 
