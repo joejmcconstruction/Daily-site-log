@@ -15,6 +15,8 @@ const MODEL = "claude-opus-5";
 const SUPPORTED_MEDIA = new Set(["image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"]);
 
 // Structured output schema — the model must return exactly this shape.
+// The API allows at most 16 nullable/union-typed fields per schema, so only
+// numbers and the paid flag are nullable; text fields use "" for "not shown".
 const nullable = (type) => ({ anyOf: [{ type }, { type: "null" }] });
 
 const DOCKET_SCHEMA = {
@@ -32,15 +34,15 @@ const DOCKET_SCHEMA = {
       description:
         "delivery_docket: a delivery note / weighbridge ticket with no prices, or prices incidental. receipt: a till or counter receipt for goods bought and paid for. invoice: a supplier invoice / account statement line for goods supplied. other: not a materials document at all.",
     },
-    docket_no: { ...nullable("string"), description: "Docket, ticket, delivery note, receipt, transaction or invoice number as printed." },
-    supplier: { ...nullable("string"), description: "Company that issued the document (letterhead / logo), e.g. Chadwicks, Roadstone. Include the branch if printed, e.g. 'Chadwicks Sallynoggin'." },
-    haulier: { ...nullable("string"), description: "Transport company if shown separately from the supplier." },
-    delivery_date: { ...nullable("string"), description: "Document date as YYYY-MM-DD. Irish documents are day/month/year." },
-    delivery_time: { ...nullable("string"), description: "Time printed on the document as HH:MM, if any." },
-    vehicle_reg: { ...nullable("string"), description: "Truck registration plate as printed, e.g. 191-D-12345." },
-    po_number: { ...nullable("string"), description: "Customer order / PO / job reference number if shown." },
-    customer_name: { ...nullable("string"), description: "Customer or account name the document is made out to, if shown." },
-    delivery_address: { ...nullable("string"), description: "Site or delivery address as printed, if any." },
+    docket_no: { type: "string", description: "Docket, ticket, delivery note, receipt, transaction or invoice number as printed." },
+    supplier: { type: "string", description: "Company that issued the document (letterhead / logo), e.g. Chadwicks, Roadstone. Include the branch if printed, e.g. 'Chadwicks Sallynoggin'." },
+    haulier: { type: "string", description: "Transport company if shown separately from the supplier." },
+    delivery_date: { type: "string", description: "Document date as YYYY-MM-DD. Irish documents are day/month/year." },
+    delivery_time: { type: "string", description: "Time printed on the document as HH:MM, if any." },
+    vehicle_reg: { type: "string", description: "Truck registration plate as printed, e.g. 191-D-12345." },
+    po_number: { type: "string", description: "Customer order / PO / job reference number if shown." },
+    customer_name: { type: "string", description: "Customer or account name the document is made out to, if shown." },
+    delivery_address: { type: "string", description: "Site or delivery address as printed, if any." },
     items: {
       type: "array",
       description: "One entry per product line on the document. Skip lines that are only VAT, totals, discounts, deposits or payment lines.",
@@ -49,9 +51,9 @@ const DOCKET_SCHEMA = {
         additionalProperties: false,
         properties: {
           product: { type: "string", description: "Short clean product name, e.g. 'Postcrete 20kg', 'Clause 804', 'C30/37 concrete'. Use the exact known name when it clearly matches." },
-          raw_description: { ...nullable("string"), description: "The product line exactly as written, including any product code." },
+          raw_description: { type: "string", description: "The product line exactly as written, including any product code." },
           quantity: { ...nullable("number"), description: "Quantity delivered or bought. Net weight on weighbridge tickets." },
-          unit: { ...nullable("string"), description: "One of: t, m³, m, units, loads, L, kg, bags." },
+          unit: { type: "string", description: "One of: t, m³, m, units, loads, L, kg, bags." },
           unit_price: { ...nullable("number"), description: "Price per unit excluding VAT, if printed. Null on documents without prices." },
           line_total: { ...nullable("number"), description: "Line total excluding VAT, if printed or derivable as quantity × unit_price. Null on documents without prices." },
           vat_rate: { ...nullable("number"), description: "VAT rate for this line as a percentage, e.g. 23 or 13.5, if shown." },
@@ -67,12 +69,12 @@ const DOCKET_SCHEMA = {
     subtotal_ex_vat: { ...nullable("number"), description: "Document total excluding VAT, if printed." },
     vat_amount: { ...nullable("number"), description: "Total VAT on the document, if printed." },
     total_inc_vat: { ...nullable("number"), description: "Document grand total including VAT, if printed." },
-    currency: { ...nullable("string"), description: "Currency code, e.g. EUR. Null if no prices." },
+    currency: { type: "string", description: "Currency code, e.g. EUR. Null if no prices." },
     paid: { ...nullable("boolean"), description: "True if the document shows it was paid (PAID stamp, card/cash payment line, 'amount tendered'). False if it shows an amount still due. Null if it doesn't say." },
-    payment_method: { ...nullable("string"), description: "Card, Cash, Account, Bank transfer, or as printed. Null if not shown." },
+    payment_method: { type: "string", description: "Card, Cash, Account, Bank transfer, or as printed. Null if not shown." },
     confidence: { type: "number", description: "0 to 1: confidence the fields are right without checking the paper document." },
     warnings: { type: "array", items: { type: "string" }, description: "Short notes on anything unreadable, missing or ambiguous." },
-    notes: { ...nullable("string"), description: "Anything else worth telling the person entering the record." },
+    notes: { type: "string", description: "Anything else worth telling the person entering the record." },
   },
   required: [
     "transcript",
@@ -121,7 +123,7 @@ How to read them:
 - paid: true when the document shows payment taken (PAID stamp, "Card", "Visa", "Cash", "Tendered", "Change due", "Amount paid"). false when it shows a balance due or is an invoice with payment terms. null when it doesn't say.
 - category: pick the best-fit cost category for each line from the list in the schema.
 - supplier / haulier: haulier only if a separate transport company is shown.
-- Read what is there. Return null only when a field is genuinely absent from the document or truly illegible, and add a short warning saying which. Do not withhold a value just because you are not certain which label it belongs under — return your best reading and note the doubt in warnings. Legible handwriting counts as readable.
+- Read what is there. Leave a field empty (an empty string for text, null for numbers and for paid) only when it is genuinely absent from the document or truly illegible, and add a short warning saying which. Do not withhold a value just because you are not certain which label it belongs under — return your best reading and note the doubt in warnings. Legible handwriting counts as readable.
 - confidence is your overall confidence, 0 to 1, that these fields could go straight into the register without being checked against the paper. Handwritten quantities, faded thermal receipts and photos taken at an angle should lower it.
 - If the file is not materials paperwork at all, set document_type to "other", leave the other fields null or empty, and say what it appears to be in notes.`;
 
