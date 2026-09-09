@@ -1,6 +1,6 @@
 export const WEATHER_OPTIONS = ["Sunny", "Overcast", "Light rain", "Heavy rain", "Showers"];
 
-export const PROJECT_OPTIONS = ["HML The Glen", "Glenageary Demo", "Farrenboley House", "Project 1", "Project 2"];
+export const PROJECT_OPTIONS = ["Horizon Swords", "Tallaght School", "HML The Glen", "Glenageary Demo", "Farrenboley House", "Project 1", "Project 2"];
 
 export const LABOUR_RATE_NAME = "Labour";
 
