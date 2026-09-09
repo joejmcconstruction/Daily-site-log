@@ -3,6 +3,7 @@ import { supabase } from "../supabaseClient";
 import { PROJECT_OPTIONS, MACHINE_OPTIONS } from "./helpers";
 import { renderPieChart, renderGroupedBarChart, renderStackedBarChart } from "./dashboardCharts";
 import { buildDeliveriesSheets } from "./deliveriesExcel";
+import { fetchDeliveries } from "./deliveries";
 
 const EXPORT_BUCKET = "reports-export";
 const EXPORT_FILE = "site-daily-report.xlsx";
@@ -628,22 +629,23 @@ export async function syncExcelExport() {
   // the app (App.jsx syncs on load), not the moment a foreman files a report.
   if (!(await currentUserIsAdmin())) return;
 
-  const [reportsRes, machineRes, dayworksRes, deliveriesRes] = await Promise.all([
+  // fetchDeliveries() merges the admin-only delivery_costs rows in, which is
+  // what puts prices on the Deliveries and Costs by Project sheets.
+  const [reportsRes, machineRes, dayworksRes, deliveries] = await Promise.all([
     supabase.from("reports").select("*"),
     supabase.from("machine_hours").select("*"),
     supabase.from("dayworks").select("*"),
-    supabase.from("deliveries").select("*"),
+    fetchDeliveries(),
   ]);
   if (reportsRes.error) throw reportsRes.error;
   if (machineRes.error) throw machineRes.error;
   if (dayworksRes.error) throw dayworksRes.error;
-  if (deliveriesRes.error) throw deliveriesRes.error;
 
   const wb = buildWorkbook({
     reports: reportsRes.data || [],
     machineHours: machineRes.data || [],
     dayworks: dayworksRes.data || [],
-    deliveries: deliveriesRes.data || [],
+    deliveries,
   });
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: XLSX_MIME });

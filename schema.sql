@@ -691,3 +691,61 @@ drop policy if exists "authenticated users can delete dockets" on storage.object
 create policy "authenticated users can delete dockets"
   on storage.objects for delete to authenticated
   using (bucket_id = 'dockets');
+
+-- ============================================================
+-- Receipts, invoices and costs on the deliveries register
+-- ============================================================
+-- The Dockets tab now takes merchant receipts and supplier invoices as well
+-- as delivery dockets, so every material line can carry a cost and be filed
+-- under a project. Prices are kept in a separate admin-only table, matching
+-- the rule already applied to the export workbook: crew accounts see what was
+-- delivered, never what it cost. Re-runnable.
+
+alter table public.deliveries
+  add column if not exists doc_type text not null default 'docket';
+alter table public.deliveries drop constraint if exists deliveries_doc_type_check;
+alter table public.deliveries
+  add constraint deliveries_doc_type_check check (doc_type in ('docket', 'receipt', 'invoice', 'other'));
+
+alter table public.deliveries
+  add column if not exists cost_category text;   -- e.g. "Fixings & consumables"; not a price, so crew-visible
+
+-- One row per deliveries row that has a price. deliveries.extraction holds a
+-- copy of the reader's output with prices and the transcript stripped; the
+-- full output lives here.
+create table if not exists public.delivery_costs (
+  delivery_id uuid primary key references public.deliveries(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id),
+  unit_price numeric,        -- ex VAT
+  line_total numeric,        -- ex VAT
+  vat_rate numeric,          -- percent, e.g. 23 or 13.5
+  doc_total numeric,         -- whole document total inc VAT, repeated on each line of that document
+  currency text default 'EUR',
+  paid boolean,              -- null = not stated
+  payment_method text,       -- Card, Cash, Account, Bank transfer...
+  extraction jsonb           -- full reader output for this document, prices included
+);
+
+alter table public.delivery_costs enable row level security;
+
+drop policy if exists "admins can view delivery costs" on public.delivery_costs;
+create policy "admins can view delivery costs"
+on public.delivery_costs for select to authenticated
+using (public.is_admin());
+
+drop policy if exists "admins can insert delivery costs" on public.delivery_costs;
+create policy "admins can insert delivery costs"
+on public.delivery_costs for insert to authenticated
+with check (public.is_admin());
+
+drop policy if exists "admins can update delivery costs" on public.delivery_costs;
+create policy "admins can update delivery costs"
+on public.delivery_costs for update to authenticated
+using (public.is_admin())
+with check (public.is_admin());
+
+drop policy if exists "admins can delete delivery costs" on public.delivery_costs;
+create policy "admins can delete delivery costs"
+on public.delivery_costs for delete to authenticated
+using (public.is_admin());

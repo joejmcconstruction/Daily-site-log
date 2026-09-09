@@ -94,20 +94,28 @@ If you'd rather have `sitelog.yourcompany.com` than the free `.vercel.app` addre
 
 ---
 
-## 9. Dockets & deliveries (automatic docket reading)
+## 9. Dockets, receipts & costs (automatic document reading)
 
-The **Dockets** tab lets anyone on site photograph a delivery docket at the gate.
-Claude reads the docket number, supplier, date, materials and quantities, and the
-app prefills a delivery for you to check and save. Every saved delivery lands on the
-**Deliveries** sheet (a filterable Excel table) and the **Delivery Summary** sheet
-(quantities by product and month, lines by supplier, live formulas) of the export
-workbook. The tab also has its own **Excel** button that downloads just the
-register for whatever filter is showing — handy for sending to a QS.
+The **Dockets** tab lets anyone on site photograph a delivery docket, a merchant
+receipt (Chadwicks and the like) or a supplier invoice. Claude reads the document
+number, supplier, date, each item with quantity, and on receipts and invoices the
+prices, VAT and whether it was paid. The app prefills a record for you to check,
+pick the project, and save. Every saved line lands on the **Deliveries** sheet
+(a filterable Excel table with a plain-English Description column), the
+**Delivery Summary** sheet (quantities by product and month) and the
+**Costs by Project** sheet (ex-VAT cost by project, category and supplier by
+month, plus what's unpaid) of the export workbook. The tab also has its own
+**Excel** button that downloads the register for whatever filter is showing.
+
+Prices are admin-only, the same rule as the costed workbook: crew accounts see
+what came in, never what it cost. A foreman scanning a receipt still logs the
+items; an admin can add the prices later by opening the line.
 
 Setup, once:
 
-1. In Supabase → SQL Editor, run the **Deliveries & dockets** block at the bottom of
-   `schema.sql` (it's safe to re-run).
+1. In Supabase → SQL Editor, run the **Deliveries & dockets** block and then the
+   **Receipts, invoices and costs** block at the bottom of `schema.sql` (both are
+   safe to re-run).
 2. Get an API key at [console.anthropic.com](https://console.anthropic.com) →
    Settings → API keys.
 3. In Vercel → your project → **Settings → Environment Variables**, add
@@ -126,8 +134,12 @@ How it works:
 - Photos are shrunk to 2000px before upload. PDFs over about 3 MB are still stored
   but have to be typed in by hand (Vercel's request size limit).
 - The supplier and product pick lists live in `src/lib/deliveries.js`
-  (`SUPPLIER_OPTIONS`, `DELIVERY_PRODUCT_OPTIONS`). Free text is always allowed;
-  the lists just make the common ones a tap away and give the reader names to snap to.
+  (`SUPPLIER_OPTIONS`, `DELIVERY_PRODUCT_OPTIONS`); cost categories in
+  `src/lib/costCategories.js`; projects in `PROJECT_OPTIONS` in `src/lib/helpers.js`.
+  Free text is allowed for suppliers and products; the lists just make the common
+  ones a tap away and give the reader names to snap to.
+- Every card has a **What the reader saw** panel showing the full transcript the
+  reader made before filling the fields — open it when a read looks wrong.
 - Dockets are stored in a public-by-URL `dockets` bucket, same as report photos, so
   the **Open** links in the Excel export keep working.
 

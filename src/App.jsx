@@ -90,7 +90,7 @@ export default function App() {
           {tab === "new" && !detailId && <NewReportForm onSubmitted={() => setHistoryRefreshKey((k) => k + 1)} />}
           {tab === "dashboard" && !detailId && <Dashboard />}
           {tab === "history" && !detailId && <HistoryList refreshKey={historyRefreshKey} onOpen={setDetailId} />}
-          {tab === "deliveries" && !detailId && <DeliveriesPage />}
+          {tab === "deliveries" && !detailId && <DeliveriesPage isAdmin={isAdmin} />}
           {tab === "certs" && !detailId && isAdmin && <CertsPage />}
           {tab === "staff" && !detailId && isAdmin && <StaffPage />}
           {detailId && (
