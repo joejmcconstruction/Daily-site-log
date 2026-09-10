@@ -1307,3 +1307,11 @@ select.input {
 .breakdown-row:last-child {
   border-bottom: none;
 }
+
+.project-picker {
+  margin-bottom: 10px;
+}
+
+.project-picker .input {
+  font-weight: 700;
+}

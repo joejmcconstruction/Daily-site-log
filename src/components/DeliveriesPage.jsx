@@ -74,8 +74,22 @@ function inPeriod(d, period) {
   return true;
 }
 
+const PROJECT_STORAGE_KEY = "dockets.project";
+
+function rememberedProject() {
+  try {
+    const saved = window.localStorage.getItem(PROJECT_STORAGE_KEY);
+    return PROJECT_OPTIONS.includes(saved) ? saved : "";
+  } catch {
+    return "";
+  }
+}
+
 export default function DeliveriesPage({ isAdmin = false }) {
   const [view, setView] = useState("add");
+  // Picked once at the top of Add; every docket captured after that is filed
+  // under it, so nobody has to scroll down and set it card by card.
+  const [project, setProject] = useState(rememberedProject);
   const [deliveries, setDeliveries] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [drafts, setDrafts] = useState([]);
@@ -104,6 +118,26 @@ export default function DeliveriesPage({ isAdmin = false }) {
     window.setTimeout(() => setBanner(null), 3500);
   }
 
+  function chooseProject(name) {
+    setProject(name);
+    try {
+      window.localStorage.setItem(PROJECT_STORAGE_KEY, name);
+    } catch {
+      // Private browsing or storage blocked: the choice just won't persist.
+    }
+    // Cards still waiting to be checked follow the new choice unless someone
+    // already set a different project on them by hand.
+    setDrafts((prev) =>
+      prev.map((d) => (!d.header.project_name || d.header.project_name === project ? { ...d, header: { ...d.header, project_name: name } } : d))
+    );
+  }
+
+  function newDraft(opts) {
+    const d = emptyDraft(opts);
+    d.header.project_name = project;
+    return d;
+  }
+
   function afterSave() {
     load();
     // No-op for crew accounts; keeps the admin workbook's sheets current.
@@ -125,7 +159,7 @@ export default function DeliveriesPage({ isAdmin = false }) {
       } catch (err) {
         console.error(err);
       }
-      prepared.push({ ...emptyDraft({ file, fileName: original.name }), status: "reading" });
+      prepared.push({ ...newDraft({ file, fileName: original.name }), status: "reading" });
     }
     setDrafts((prev) => [...prepared, ...prev]);
     setView("add");
@@ -262,12 +296,14 @@ export default function DeliveriesPage({ isAdmin = false }) {
         <AddView
           drafts={drafts}
           isAdmin={isAdmin}
+          project={project}
+          onProject={chooseProject}
           reviewCount={reviewCount}
           savingAll={savingAll}
           registerCount={registerCount}
           onCamera={() => cameraRef.current?.click()}
           onGallery={() => galleryRef.current?.click()}
-          onManual={() => setDrafts((prev) => [emptyDraft(), ...prev])}
+          onManual={() => setDrafts((prev) => [newDraft(), ...prev])}
           onPatch={patchDraft}
           onSave={handleSave}
           onSaveAll={handleSaveAll}
@@ -297,19 +333,50 @@ export default function DeliveriesPage({ isAdmin = false }) {
 
 // ---------- Add: capture paperwork and check what the reader found ----------
 
-function AddView({ drafts, isAdmin, reviewCount, savingAll, registerCount, onCamera, onGallery, onManual, onPatch, onSave, onSaveAll, onRemove, onShowRegister }) {
+function AddView({
+  drafts,
+  isAdmin,
+  project,
+  onProject,
+  reviewCount,
+  savingAll,
+  registerCount,
+  onCamera,
+  onGallery,
+  onManual,
+  onPatch,
+  onSave,
+  onSaveAll,
+  onRemove,
+  onShowRegister,
+}) {
+  const ready = !!project;
   return (
     <div>
+      <div className="project-picker">
+        <label className="label" htmlFor="dockets-project">
+          Adding to project
+        </label>
+        <select id="dockets-project" className={`input ${ready ? "" : "error"}`} value={project} onChange={(e) => onProject(e.target.value)}>
+          <option value="">Pick a project first...</option>
+          {PROJECT_OPTIONS.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+      </div>
+
       <div className="scan-row">
-        <button type="button" className="scan-btn" onClick={onCamera}>
+        <button type="button" className="scan-btn" onClick={onCamera} disabled={!ready}>
           <Camera size={22} color="var(--accent)" />
           <span>Photo</span>
         </button>
-        <button type="button" className="scan-btn" onClick={onGallery}>
+        <button type="button" className="scan-btn" onClick={onGallery} disabled={!ready}>
           <ImageIcon size={22} color="var(--accent)" />
           <span>Upload / PDF</span>
         </button>
-        <button type="button" className="scan-btn" onClick={onManual}>
+        <button type="button" className="scan-btn" onClick={onManual} disabled={!ready}>
           <Plus size={22} color="var(--accent)" />
           <span>Type it in</span>
         </button>
@@ -317,9 +384,9 @@ function AddView({ drafts, isAdmin, reviewCount, savingAll, registerCount, onCam
 
       {drafts.length === 0 && (
         <div className="empty-state" style={{ padding: 22 }}>
-          <div className="empty-state-title">Photograph a docket, receipt or invoice</div>
+          <div className="empty-state-title">{ready ? `Photograph a docket, receipt or invoice for ${project}` : "Pick the project first"}</div>
           <div>
-            The details are read for you. Check them, pick the project, save.
+            {ready ? "The details are read for you and filed under that project. Check them and save." : "Everything you add is filed under it."}
             {registerCount > 0 && (
               <>
                 {" "}
