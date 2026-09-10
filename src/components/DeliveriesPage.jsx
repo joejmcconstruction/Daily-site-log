@@ -14,6 +14,9 @@ import {
   ChevronDown,
   ChevronUp,
   Save,
+  ScanLine,
+  List,
+  Euro,
 } from "lucide-react";
 import { PROJECT_OPTIONS, dateKey, prettyDate } from "../lib/helpers";
 import { syncExcelExport } from "../lib/exportExcel";
@@ -46,29 +49,41 @@ import { downloadDeliveriesWorkbook } from "../lib/deliveriesExcel";
 
 const DOC_TYPE_CHOICES = ["docket", "receipt", "invoice"];
 
+// Period filters shared by the Register and Costs views.
+function periodStart(period) {
+  const now = new Date();
+  if (period === "week") {
+    const d = new Date(now);
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // back to Monday
+    return { from: dateKey(d), to: null };
+  }
+  if (period === "month") return { from: dateKey(new Date(now.getFullYear(), now.getMonth(), 1)), to: null };
+  if (period === "lastmonth") {
+    return {
+      from: dateKey(new Date(now.getFullYear(), now.getMonth() - 1, 1)),
+      to: dateKey(new Date(now.getFullYear(), now.getMonth(), 1)),
+    };
+  }
+  return { from: null, to: null };
+}
+
+function inPeriod(d, period) {
+  const { from, to } = periodStart(period);
+  if (from && d.delivery_date < from) return false;
+  if (to && d.delivery_date >= to) return false;
+  return true;
+}
+
 export default function DeliveriesPage({ isAdmin = false }) {
+  const [view, setView] = useState("add");
   const [deliveries, setDeliveries] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [drafts, setDrafts] = useState([]);
-  const [filter, setFilter] = useState("month");
-  const [search, setSearch] = useState("");
   const [banner, setBanner] = useState(null);
   const [downloading, setDownloading] = useState(false);
   const [savingAll, setSavingAll] = useState(false);
   const cameraRef = useRef(null);
   const galleryRef = useRef(null);
-
-  const filters = useMemo(() => {
-    const base = [
-      ["week", "This week"],
-      ["month", "This month"],
-      ["all", "All"],
-      ["check", "Needs check"],
-      ["uninvoiced", "No invoice"],
-    ];
-    if (isAdmin) base.push(["unpaid", "Unpaid"], ["nocost", "No price"]);
-    return base;
-  }, [isAdmin]);
 
   useEffect(() => {
     load();
@@ -80,13 +95,13 @@ export default function DeliveriesPage({ isAdmin = false }) {
       setLoadError("");
     } catch (err) {
       console.error(err);
-      setLoadError(err.message || "Couldn't load deliveries.");
+      setLoadError(err.message || "Couldn't load the register.");
     }
   }
 
   function flash(type, text) {
     setBanner({ type, text });
-    window.setTimeout(() => setBanner(null), 3000);
+    window.setTimeout(() => setBanner(null), 3500);
   }
 
   function afterSave() {
@@ -113,6 +128,7 @@ export default function DeliveriesPage({ isAdmin = false }) {
       prepared.push({ ...emptyDraft({ file, fileName: original.name }), status: "reading" });
     }
     setDrafts((prev) => [...prepared, ...prev]);
+    setView("add");
     prepared.forEach(runRead);
   }
 
@@ -164,7 +180,7 @@ export default function DeliveriesPage({ isAdmin = false }) {
 
   async function handleSave(draft) {
     if (await saveOne(draft)) {
-      flash("success", "Saved.");
+      flash("success", "Saved to the register.");
       afterSave();
     }
   }
@@ -177,37 +193,203 @@ export default function DeliveriesPage({ isAdmin = false }) {
     }
     setSavingAll(false);
     if (saved) {
-      flash("success", `${saved} ${saved === 1 ? "record" : "records"} saved.`);
+      flash("success", `${saved} ${saved === 1 ? "record" : "records"} saved to the register.`);
       afterSave();
     }
   }
 
+  async function handleDownload(rows) {
+    setDownloading(true);
+    try {
+      await downloadDeliveriesWorkbook(rows, `deliveries-${dateKey(new Date())}.xlsx`);
+    } catch (err) {
+      console.error(err);
+      flash("error", err.message || "Couldn't build the Excel file.");
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  const reviewCount = drafts.filter((d) => d.status === "review").length;
+  const registerCount = deliveries ? deliveries.length : 0;
+
+  return (
+    <div>
+      <datalist id="supplier-options">
+        {SUPPLIER_OPTIONS.map((s) => (
+          <option key={s} value={s} />
+        ))}
+      </datalist>
+      <datalist id="product-options">
+        {DELIVERY_PRODUCT_OPTIONS.map((p) => (
+          <option key={p} value={p} />
+        ))}
+      </datalist>
+      <datalist id="payment-options">
+        {PAYMENT_OPTIONS.map((p) => (
+          <option key={p} value={p} />
+        ))}
+      </datalist>
+      <input ref={cameraRef} type="file" accept="image/*" capture="environment" multiple onChange={handleFiles} style={{ display: "none" }} />
+      <input ref={galleryRef} type="file" accept="image/*,application/pdf,.pdf" multiple onChange={handleFiles} style={{ display: "none" }} />
+
+      <div className="subtabs">
+        <button type="button" className={`subtab ${view === "add" ? "active" : ""}`} onClick={() => setView("add")}>
+          <ScanLine size={15} />
+          <span>Add</span>
+          {drafts.length > 0 && <span className="subtab-count">{drafts.length}</span>}
+        </button>
+        <button type="button" className={`subtab ${view === "register" ? "active" : ""}`} onClick={() => setView("register")}>
+          <List size={15} />
+          <span>Register</span>
+        </button>
+        {isAdmin && (
+          <button type="button" className={`subtab ${view === "costs" ? "active" : ""}`} onClick={() => setView("costs")}>
+            <Euro size={15} />
+            <span>Costs</span>
+          </button>
+        )}
+      </div>
+
+      {banner && (
+        <div className={`banner ${banner.type}`}>
+          {banner.type === "success" ? <Check size={16} color="var(--success)" /> : <AlertCircle size={16} color="var(--danger)" />}
+          <span style={{ color: "var(--text)", fontWeight: 600 }}>{banner.text}</span>
+        </div>
+      )}
+
+      {view === "add" && (
+        <AddView
+          drafts={drafts}
+          isAdmin={isAdmin}
+          reviewCount={reviewCount}
+          savingAll={savingAll}
+          registerCount={registerCount}
+          onCamera={() => cameraRef.current?.click()}
+          onGallery={() => galleryRef.current?.click()}
+          onManual={() => setDrafts((prev) => [emptyDraft(), ...prev])}
+          onPatch={patchDraft}
+          onSave={handleSave}
+          onSaveAll={handleSaveAll}
+          onRemove={removeDraft}
+          onShowRegister={() => setView("register")}
+        />
+      )}
+
+      {view === "register" && (
+        <RegisterView
+          deliveries={deliveries}
+          loadError={loadError}
+          isAdmin={isAdmin}
+          downloading={downloading}
+          onDownload={handleDownload}
+          onChanged={afterSave}
+          onFlash={flash}
+        />
+      )}
+
+      {view === "costs" && isAdmin && (
+        <CostsView deliveries={deliveries} loadError={loadError} downloading={downloading} onDownload={handleDownload} />
+      )}
+    </div>
+  );
+}
+
+// ---------- Add: capture paperwork and check what the reader found ----------
+
+function AddView({ drafts, isAdmin, reviewCount, savingAll, registerCount, onCamera, onGallery, onManual, onPatch, onSave, onSaveAll, onRemove, onShowRegister }) {
+  return (
+    <div>
+      <div className="scan-row">
+        <button type="button" className="scan-btn" onClick={onCamera}>
+          <Camera size={22} color="var(--accent)" />
+          <span>Photo</span>
+        </button>
+        <button type="button" className="scan-btn" onClick={onGallery}>
+          <ImageIcon size={22} color="var(--accent)" />
+          <span>Upload / PDF</span>
+        </button>
+        <button type="button" className="scan-btn" onClick={onManual}>
+          <Plus size={22} color="var(--accent)" />
+          <span>Type it in</span>
+        </button>
+      </div>
+
+      {drafts.length === 0 && (
+        <div className="empty-state" style={{ padding: 22 }}>
+          <div className="empty-state-title">Photograph a docket, receipt or invoice</div>
+          <div>
+            The details are read for you. Check them, pick the project, save.
+            {registerCount > 0 && (
+              <>
+                {" "}
+                <button type="button" className="btn-link" style={{ margin: 0, padding: 0 }} onClick={onShowRegister}>
+                  {registerCount} in the register
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {drafts.length > 0 && (
+        <>
+          <div className="eyebrow" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
+            <span>Check and save ({drafts.length})</span>
+            {reviewCount > 1 && (
+              <button type="button" className="btn-small" onClick={onSaveAll} disabled={savingAll}>
+                {savingAll ? <Loader2 size={14} className="spin" /> : <Save size={14} />} Save all
+              </button>
+            )}
+          </div>
+          {drafts.map((d) => (
+            <DraftCard
+              key={d.id}
+              draft={d}
+              isAdmin={isAdmin}
+              onChange={(patch) => onPatch(d.id, patch)}
+              onSave={() => onSave(d)}
+              onRemove={() => onRemove(d.id)}
+            />
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------- Register: browse, edit, download ----------
+
+function RegisterView({ deliveries, loadError, isAdmin, downloading, onDownload, onChanged, onFlash }) {
+  const [period, setPeriod] = useState("month");
+  const [only, setOnly] = useState("all");
+  const [search, setSearch] = useState("");
+
+  const onlyOptions = useMemo(() => {
+    const base = [
+      ["all", "Everything"],
+      ["check", "Needs check"],
+      ["uninvoiced", "Dockets with no invoice"],
+    ];
+    if (isAdmin) base.push(["unpaid", "Unpaid"], ["nocost", "No price"]);
+    return base;
+  }, [isAdmin]);
+
   const visible = useMemo(() => {
     if (!deliveries) return [];
-    const now = new Date();
-    let from = null;
-    if (filter === "week") {
-      const d = new Date(now);
-      d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // back to Monday
-      from = dateKey(d);
-    } else if (filter === "month") {
-      from = dateKey(new Date(now.getFullYear(), now.getMonth(), 1));
-    }
     const q = search.trim().toLowerCase();
     return deliveries.filter((d) => {
-      if (filter === "check" && !d.needs_review) return false;
-      // Only dockets get matched to a supplier invoice later; receipts and
-      // invoices are their own paperwork.
-      if (filter === "uninvoiced" && (d.invoice_ref || (d.doc_type && d.doc_type !== "docket"))) return false;
-      if (filter === "unpaid" && d.cost?.paid !== false) return false;
-      if (filter === "nocost" && d.cost?.line_total !== null && d.cost?.line_total !== undefined) return false;
-      if (from && d.delivery_date < from) return false;
+      if (!inPeriod(d, period)) return false;
+      if (only === "check" && !d.needs_review) return false;
+      if (only === "uninvoiced" && (d.invoice_ref || (d.doc_type && d.doc_type !== "docket"))) return false;
+      if (only === "unpaid" && d.cost?.paid !== false) return false;
+      if (only === "nocost" && d.cost?.line_total !== null && d.cost?.line_total !== undefined) return false;
       if (!q) return true;
       return [d.supplier, d.product, d.docket_no, d.vehicle_reg, d.po_number, d.location, d.invoice_ref, d.project_name, d.cost_category].some(
         (v) => (v || "").toLowerCase().includes(q)
       );
     });
-  }, [deliveries, filter, search]);
+  }, [deliveries, period, only, search]);
 
   const grouped = useMemo(() => {
     const map = new Map();
@@ -237,113 +419,37 @@ export default function DeliveriesPage({ isAdmin = false }) {
     return parts.join(" · ");
   }, [visible]);
 
-  async function handleDownload() {
-    setDownloading(true);
-    try {
-      await downloadDeliveriesWorkbook(visible, `deliveries-${dateKey(new Date())}.xlsx`);
-    } catch (err) {
-      console.error(err);
-      flash("error", err.message || "Couldn't build the Excel file.");
-    } finally {
-      setDownloading(false);
-    }
-  }
-
-  const reviewCount = drafts.filter((d) => d.status === "review").length;
-
   return (
     <div>
-      <datalist id="supplier-options">
-        {SUPPLIER_OPTIONS.map((s) => (
-          <option key={s} value={s} />
-        ))}
-      </datalist>
-      <datalist id="product-options">
-        {DELIVERY_PRODUCT_OPTIONS.map((p) => (
-          <option key={p} value={p} />
-        ))}
-      </datalist>
-      <datalist id="payment-options">
-        {PAYMENT_OPTIONS.map((p) => (
-          <option key={p} value={p} />
-        ))}
-      </datalist>
-      <input ref={cameraRef} type="file" accept="image/*" capture="environment" multiple onChange={handleFiles} style={{ display: "none" }} />
-      <input ref={galleryRef} type="file" accept="image/*,application/pdf,.pdf" multiple onChange={handleFiles} style={{ display: "none" }} />
-
-      <div className="eyebrow" style={{ marginTop: 0 }}>
-        Dockets, Receipts &amp; Costs
-        <div className="eyebrow-sub">Photograph a docket, receipt or invoice. The details are read for you — check them, pick the project, save.</div>
-      </div>
-
-      <div className="scan-row">
-        <button type="button" className="scan-btn" onClick={() => cameraRef.current?.click()}>
-          <Camera size={20} color="var(--accent)" />
-          <span>Photo</span>
-        </button>
-        <button type="button" className="scan-btn" onClick={() => galleryRef.current?.click()}>
-          <ImageIcon size={20} color="var(--accent)" />
-          <span>Upload / PDF</span>
-        </button>
-        <button type="button" className="scan-btn" onClick={() => setDrafts((prev) => [emptyDraft(), ...prev])}>
-          <Plus size={20} color="var(--accent)" />
-          <span>Type it in</span>
-        </button>
-      </div>
-
-      {banner && (
-        <div className={`banner ${banner.type}`}>
-          {banner.type === "success" ? <Check size={16} color="var(--success)" /> : <AlertCircle size={16} color="var(--danger)" />}
-          <span style={{ color: "var(--text)", fontWeight: 600 }}>{banner.text}</span>
-        </div>
-      )}
-
-      {drafts.length > 0 && (
-        <>
-          <div className="eyebrow" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span>To check ({drafts.length})</span>
-            {reviewCount > 1 && (
-              <button type="button" className="btn-small" onClick={handleSaveAll} disabled={savingAll}>
-                {savingAll ? <Loader2 size={14} className="spin" /> : <Save size={14} />} Save all
-              </button>
-            )}
-          </div>
-          {drafts.map((d) => (
-            <DraftCard
-              key={d.id}
-              draft={d}
-              isAdmin={isAdmin}
-              onChange={(patch) => patchDraft(d.id, patch)}
-              onSave={() => handleSave(d)}
-              onRemove={() => removeDraft(d.id)}
-            />
-          ))}
-        </>
-      )}
-
-      <div className="eyebrow">Register</div>
       <div className="pill-row">
-        {filters.map(([key, label]) => (
-          <button key={key} className={`pill-btn ${filter === key ? "active" : ""}`} onClick={() => setFilter(key)}>
+        {[
+          ["week", "This week"],
+          ["month", "This month"],
+          ["lastmonth", "Last month"],
+          ["all", "All time"],
+        ].map(([key, label]) => (
+          <button key={key} className={`pill-btn small ${period === key ? "active" : ""}`} onClick={() => setPeriod(key)}>
             {label}
           </button>
         ))}
       </div>
-      <input
-        className="input"
-        type="search"
-        placeholder="Search supplier, product, doc no, project..."
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        style={{ marginBottom: 10 }}
-      />
+      <div className="two-col" style={{ marginBottom: 10 }}>
+        <select className="input" value={only} onChange={(e) => setOnly(e.target.value)} style={{ flex: 1 }}>
+          {onlyOptions.map(([key, label]) => (
+            <option key={key} value={key}>
+              {label}
+            </option>
+          ))}
+        </select>
+        <input className="input" type="search" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} style={{ flex: 1 }} />
+      </div>
 
       <div className="register-summary">
         <span>
           {visible.length} {visible.length === 1 ? "line" : "lines"}
           {totals ? ` · ${totals}` : ""}
         </span>
-        <button type="button" className="btn-small" onClick={handleDownload} disabled={downloading || !visible.length}>
+        <button type="button" className="btn-small" onClick={() => onDownload(visible)} disabled={downloading || !visible.length}>
           {downloading ? <Loader2 size={14} className="spin" /> : <Download size={14} />} Excel
         </button>
       </div>
@@ -363,8 +469,8 @@ export default function DeliveriesPage({ isAdmin = false }) {
 
       {deliveries !== null && grouped.length === 0 && (
         <div className="empty-state" style={{ padding: 24 }}>
-          <div className="empty-state-title">Nothing {filter === "all" && !search ? "logged yet" : "matches"}</div>
-          <div>{filter === "all" && !search ? "Photograph a docket or receipt above to log the first one." : "Try another filter."}</div>
+          <div className="empty-state-title">Nothing here</div>
+          <div>{period === "all" && only === "all" && !search ? "Add a docket or receipt on the Add tab." : "Try a wider period or clear the filter."}</div>
         </div>
       )}
 
@@ -373,7 +479,7 @@ export default function DeliveriesPage({ isAdmin = false }) {
           <div className="date-heading">{prettyDate(date)}</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {rows.map((row) => (
-              <DeliveryRow key={row.id} row={row} isAdmin={isAdmin} onChanged={afterSave} onFlash={flash} />
+              <DeliveryRow key={row.id} row={row} isAdmin={isAdmin} onChanged={onChanged} onFlash={onFlash} />
             ))}
           </div>
         </div>
@@ -381,6 +487,145 @@ export default function DeliveriesPage({ isAdmin = false }) {
     </div>
   );
 }
+
+// ---------- Costs (admin): what each project has cost ----------
+
+function summariseCosts(rows) {
+  const byProject = new Map();
+  let noPrice = 0;
+  rows.forEach((d) => {
+    const lt = d.cost?.line_total;
+    if (lt === null || lt === undefined) {
+      if (d.doc_type === "receipt" || d.doc_type === "invoice") noPrice += 1;
+      return;
+    }
+    const key = d.project_name || "(no project)";
+    const p = byProject.get(key) || { project: key, total: 0, unpaid: 0, lines: 0, byCategory: {}, bySupplier: {} };
+    const v = Number(lt);
+    p.total += v;
+    p.lines += 1;
+    if (d.cost.paid === false) p.unpaid += v;
+    const c = d.cost_category || "Uncategorised";
+    p.byCategory[c] = (p.byCategory[c] || 0) + v;
+    const s = d.supplier || "Unknown supplier";
+    p.bySupplier[s] = (p.bySupplier[s] || 0) + v;
+    byProject.set(key, p);
+  });
+  const projects = Array.from(byProject.values()).sort((a, b) => b.total - a.total);
+  const grand = projects.reduce((sum, p) => sum + p.total, 0);
+  const unpaid = projects.reduce((sum, p) => sum + p.unpaid, 0);
+  return { projects, grand, unpaid, noPrice };
+}
+
+function CostsView({ deliveries, loadError, downloading, onDownload }) {
+  const [period, setPeriod] = useState("month");
+  const [openProject, setOpenProject] = useState(null);
+
+  const rows = useMemo(() => (deliveries || []).filter((d) => inPeriod(d, period)), [deliveries, period]);
+  const summary = useMemo(() => summariseCosts(rows), [rows]);
+
+  return (
+    <div>
+      <div className="pill-row">
+        {[
+          ["month", "This month"],
+          ["lastmonth", "Last month"],
+          ["all", "All time"],
+        ].map(([key, label]) => (
+          <button key={key} className={`pill-btn small ${period === key ? "active" : ""}`} onClick={() => setPeriod(key)}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {loadError && (
+        <div className="empty-state">
+          <div className="empty-state-title">Couldn't load costs</div>
+          <div>{loadError}</div>
+        </div>
+      )}
+
+      {deliveries === null && !loadError && (
+        <div style={{ display: "flex", justifyContent: "center", padding: 40 }}>
+          <Loader2 size={22} color="var(--accent)" className="spin" />
+        </div>
+      )}
+
+      {deliveries !== null && (
+        <>
+          <div className="cost-total-card card">
+            <div>
+              <div className="cost-total-label">Materials cost, ex VAT</div>
+              <div className="cost-total-value">{formatMoney(summary.grand)}</div>
+              <div className="cost-total-sub">
+                {summary.unpaid > 0 ? `${formatMoney(summary.unpaid)} still unpaid` : "Nothing marked unpaid"}
+                {summary.noPrice > 0 ? ` · ${summary.noPrice} receipt/invoice ${summary.noPrice === 1 ? "line" : "lines"} with no price` : ""}
+              </div>
+            </div>
+            <button type="button" className="btn-small" onClick={() => onDownload(rows)} disabled={downloading || !rows.length}>
+              {downloading ? <Loader2 size={14} className="spin" /> : <Download size={14} />} Excel
+            </button>
+          </div>
+
+          {summary.projects.length === 0 && (
+            <div className="empty-state" style={{ padding: 24 }}>
+              <div className="empty-state-title">No costs in this period</div>
+              <div>Receipts and invoices with prices show up here under their project.</div>
+            </div>
+          )}
+
+          {summary.projects.map((p) => {
+            const open = openProject === p.project;
+            return (
+              <div key={p.project} className="card" style={{ padding: 0, marginBottom: 8 }}>
+                <button type="button" className="delivery-row" onClick={() => setOpenProject(open ? null : p.project)}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="delivery-row-title">
+                      <span>{p.project}</span>
+                    </div>
+                    <div className="delivery-row-sub">
+                      {p.lines} {p.lines === 1 ? "line" : "lines"}
+                      {p.unpaid > 0 ? ` · ${formatMoney(p.unpaid)} unpaid` : ""}
+                    </div>
+                  </div>
+                  <span className="delivery-row-money" style={{ fontSize: 14 }}>
+                    {formatMoney(p.total)}
+                  </span>
+                  {open ? <ChevronUp size={16} color="var(--text-muted)" /> : <ChevronDown size={16} color="var(--text-muted)" />}
+                </button>
+                {open && (
+                  <div className="delivery-edit">
+                    <BreakdownList title="By category" map={p.byCategory} />
+                    <BreakdownList title="By supplier" map={p.bySupplier} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </>
+      )}
+    </div>
+  );
+}
+
+function BreakdownList({ title, map }) {
+  const entries = Object.entries(map).sort((a, b) => b[1] - a[1]);
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div className="label" style={{ marginBottom: 4 }}>
+        {title}
+      </div>
+      {entries.map(([name, value]) => (
+        <div key={name} className="breakdown-row">
+          <span>{name}</span>
+          <span className="delivery-row-money">{formatMoney(value)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------- Shared pieces ----------
 
 function DocketThumb({ previewUrl, isImage, href }) {
   const inner = previewUrl && isImage ? <img src={previewUrl} alt="Document" /> : <FileText size={20} color="var(--text-muted)" />;
@@ -416,8 +661,12 @@ function DocTypePills({ value, onChange }) {
   );
 }
 
+// The four fields that matter on every record, then everything else folded
+// away under "More details" (opened automatically when the reader filled
+// any of them in).
 function HeaderFields({ value, errors = {}, onChange, docType }) {
   const isDocket = docType === "docket";
+  const hasMore = !!(value.location || value.vehicle_reg || value.haulier || value.po_number || value.notes);
   return (
     <>
       <div className="two-col">
@@ -455,55 +704,59 @@ function HeaderFields({ value, errors = {}, onChange, docType }) {
               </option>
             ))}
           </select>
-          {errors.project_name && <div className="hint error">Pick a project so the cost lands somewhere</div>}
+          {errors.project_name && <div className="hint error">Pick a project</div>}
         </div>
         <div className="field">
           <label className="label">Supplier</label>
           <input className="input" type="text" list="supplier-options" value={value.supplier || ""} onChange={(e) => onChange("supplier", e.target.value)} />
         </div>
       </div>
-      <div className="two-col">
-        <div className="field">
-          <label className="label">{isDocket ? "Vehicle reg" : "PO / job ref"}</label>
-          {isDocket ? (
+
+      <details className="more-details" open={hasMore || undefined}>
+        <summary>More details</summary>
+        <div className="two-col">
+          <div className="field">
+            <label className="label">Location on site</label>
             <input
               className="input"
               type="text"
-              style={{ textTransform: "uppercase" }}
-              value={value.vehicle_reg || ""}
-              onChange={(e) => onChange("vehicle_reg", e.target.value)}
+              placeholder="e.g. Unit 2 slab"
+              value={value.location || ""}
+              onChange={(e) => onChange("location", e.target.value)}
             />
-          ) : (
-            <input className="input" type="text" value={value.po_number || ""} onChange={(e) => onChange("po_number", e.target.value)} />
-          )}
+          </div>
+          <div className="field">
+            <label className="label">{isDocket ? "Vehicle reg" : "PO / job ref"}</label>
+            {isDocket ? (
+              <input
+                className="input"
+                type="text"
+                style={{ textTransform: "uppercase" }}
+                value={value.vehicle_reg || ""}
+                onChange={(e) => onChange("vehicle_reg", e.target.value)}
+              />
+            ) : (
+              <input className="input" type="text" value={value.po_number || ""} onChange={(e) => onChange("po_number", e.target.value)} />
+            )}
+          </div>
         </div>
+        {isDocket && (
+          <div className="two-col">
+            <div className="field">
+              <label className="label">Haulier</label>
+              <input className="input" type="text" value={value.haulier || ""} onChange={(e) => onChange("haulier", e.target.value)} />
+            </div>
+            <div className="field">
+              <label className="label">PO no</label>
+              <input className="input" type="text" value={value.po_number || ""} onChange={(e) => onChange("po_number", e.target.value)} />
+            </div>
+          </div>
+        )}
         <div className="field">
-          <label className="label">Location on site</label>
-          <input
-            className="input"
-            type="text"
-            placeholder="e.g. Unit 2 slab"
-            value={value.location || ""}
-            onChange={(e) => onChange("location", e.target.value)}
-          />
+          <label className="label">Notes</label>
+          <textarea className="input" rows={2} value={value.notes || ""} onChange={(e) => onChange("notes", e.target.value)} />
         </div>
-      </div>
-      {isDocket && (
-        <div className="two-col">
-          <div className="field">
-            <label className="label">Haulier</label>
-            <input className="input" type="text" value={value.haulier || ""} onChange={(e) => onChange("haulier", e.target.value)} />
-          </div>
-          <div className="field">
-            <label className="label">PO no</label>
-            <input className="input" type="text" value={value.po_number || ""} onChange={(e) => onChange("po_number", e.target.value)} />
-          </div>
-        </div>
-      )}
-      <div className="field">
-        <label className="label">Notes</label>
-        <textarea className="input" rows={2} value={value.notes || ""} onChange={(e) => onChange("notes", e.target.value)} />
-      </div>
+      </details>
     </>
   );
 }
@@ -591,30 +844,28 @@ function ItemFields({ item, error, onChange, onRemove, showCost }) {
 
 function CostFields({ value, onChange }) {
   return (
-    <>
-      <div className="two-col">
-        <div className="field">
-          <label className="label">Total inc VAT</label>
-          <input
-            className="input"
-            type="number"
-            inputMode="decimal"
-            step="any"
-            placeholder="€"
-            value={value.total}
-            onChange={(e) => onChange("total", e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label className="label">Paid?</label>
-          <select className="input" value={value.paid || ""} onChange={(e) => onChange("paid", e.target.value)}>
-            {PAID_OPTIONS.map(([v, label]) => (
-              <option key={v} value={v}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </div>
+    <div className="two-col">
+      <div className="field">
+        <label className="label">Total inc VAT</label>
+        <input
+          className="input"
+          type="number"
+          inputMode="decimal"
+          step="any"
+          placeholder="€"
+          value={value.total}
+          onChange={(e) => onChange("total", e.target.value)}
+        />
+      </div>
+      <div className="field">
+        <label className="label">Paid?</label>
+        <select className="input" value={value.paid || ""} onChange={(e) => onChange("paid", e.target.value)}>
+          {PAID_OPTIONS.map(([v, label]) => (
+            <option key={v} value={v}>
+              {label}
+            </option>
+          ))}
+        </select>
       </div>
       <div className="field">
         <label className="label">Paid by</label>
@@ -622,12 +873,12 @@ function CostFields({ value, onChange }) {
           className="input"
           type="text"
           list="payment-options"
-          placeholder="Card, cash, account..."
+          placeholder="Card, cash..."
           value={value.payment_method || ""}
           onChange={(e) => onChange("payment_method", e.target.value)}
         />
       </div>
-    </>
+    </div>
   );
 }
 
@@ -687,18 +938,12 @@ function DraftCard({ draft, isAdmin, onChange, onSave, onRemove }) {
               ))}
             </div>
           )}
-          {draft.docket && (
-            <details className="transcript">
-              <summary>What the reader saw</summary>
-              <pre>{draft.docket.transcript?.trim() || "(nothing legible)"}</pre>
-            </details>
-          )}
 
           <DocTypePills value={draft.docType} onChange={(t) => onChange({ docType: t })} />
 
           <HeaderFields value={draft.header} errors={errors} onChange={setHeader} docType={draft.docType} />
 
-          <div className="label" style={{ marginBottom: 6 }}>
+          <div className="label" style={{ margin: "10px 0 6px" }}>
             Items <span className="req">*</span>
           </div>
           {draft.items.map((item) => (
@@ -713,7 +958,7 @@ function DraftCard({ draft, isAdmin, onChange, onSave, onRemove }) {
           ))}
           <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
             <button type="button" className="btn-link" onClick={() => onChange({ items: [...draft.items, emptyItem()] })}>
-              <Plus size={13} /> Add another line
+              <Plus size={13} /> Add a line
             </button>
             {isAdmin && !showCost && (
               <button type="button" className="btn-link" onClick={() => onChange({ showCost: true })}>
@@ -724,9 +969,16 @@ function DraftCard({ draft, isAdmin, onChange, onSave, onRemove }) {
 
           {showCost && <CostFields value={draft.cost} onChange={setCost} />}
 
+          {draft.docket && (
+            <details className="transcript">
+              <summary>What the reader saw</summary>
+              <pre>{draft.docket.transcript?.trim() || "(nothing legible)"}</pre>
+            </details>
+          )}
+
           <label className="check-row">
             <input type="checkbox" checked={!!draft.flag} onChange={(e) => onChange({ flag: e.target.checked })} />
-            Flag for checking against the paper
+            Check against the paper later
           </label>
 
           <button className="btn-primary" onClick={onSave} disabled={saving}>
@@ -874,7 +1126,7 @@ function DeliveryRow({ row, isAdmin, onChanged, onFlash }) {
             docType={form.docType}
             onChange={(k, v) => setForm((f) => ({ ...f, header: { ...f.header, [k]: v } }))}
           />
-          <div className="label" style={{ marginBottom: 6 }}>
+          <div className="label" style={{ margin: "10px 0 6px" }}>
             Item <span className="req">*</span>
           </div>
           <ItemFields
@@ -889,31 +1141,34 @@ function DeliveryRow({ row, isAdmin, onChanged, onFlash }) {
             </button>
           )}
           {showCost && <CostFields value={form.cost} onChange={(k, v) => setForm((f) => ({ ...f, cost: { ...f.cost, [k]: v } }))} />}
-          <div className="two-col">
-            <div className="field">
-              <label className="label">Invoice ref</label>
-              <input
-                className="input"
-                type="text"
-                placeholder="Supplier invoice no"
-                value={form.invoice_ref}
-                onChange={(e) => setForm((f) => ({ ...f, invoice_ref: e.target.value }))}
-              />
+          <details className="more-details" open={form.invoice_ref || form.status !== "received" ? true : undefined}>
+            <summary>Invoice match and status</summary>
+            <div className="two-col">
+              <div className="field">
+                <label className="label">Invoice ref</label>
+                <input
+                  className="input"
+                  type="text"
+                  placeholder="Supplier invoice no"
+                  value={form.invoice_ref}
+                  onChange={(e) => setForm((f) => ({ ...f, invoice_ref: e.target.value }))}
+                />
+              </div>
+              <div className="field">
+                <label className="label">Status</label>
+                <select className="input" value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}>
+                  {DELIVERY_STATUS_OPTIONS.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
-            <div className="field">
-              <label className="label">Status</label>
-              <select className="input" value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}>
-                {DELIVERY_STATUS_OPTIONS.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+          </details>
           <label className="check-row">
             <input type="checkbox" checked={form.flag} onChange={(e) => setForm((f) => ({ ...f, flag: e.target.checked }))} />
-            Needs checking against the paper
+            Check against the paper later
           </label>
           {err && (
             <div className="hint error" style={{ marginBottom: 8 }}>
