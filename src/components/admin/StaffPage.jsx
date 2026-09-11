@@ -1,8 +1,36 @@
-import React, { useEffect, useState } from "react";
-import { Check, AlertCircle, Loader2, Plus, Paperclip, GraduationCap, Sun, ChevronDown, ChevronUp, Trash2, Pencil } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  Check,
+  AlertCircle,
+  Loader2,
+  Plus,
+  Paperclip,
+  GraduationCap,
+  Sun,
+  ChevronDown,
+  ChevronUp,
+  Trash2,
+  Pencil,
+  ShieldCheck,
+  HardHat,
+  Truck,
+  HeartPulse,
+  Award,
+  X,
+} from "lucide-react";
 import { supabase } from "../../supabaseClient";
-import { uid } from "../../lib/helpers";
-import { expiryStatus, EXPIRY_STATUS_LABEL } from "../../lib/adminHelpers";
+import { uid, dateKey } from "../../lib/helpers";
+import {
+  expiryStatus,
+  EXPIRY_STATUS_LABEL,
+  CERT_TYPES,
+  CERT_TYPE_BY_KEY,
+  certTypeOf,
+  certLabel,
+  shortDate,
+  addYears,
+  coreCertSummary,
+} from "../../lib/adminHelpers";
 import AdminFileUpload from "./AdminFileUpload";
 
 function currentYear() {
@@ -16,6 +44,14 @@ function dayCount(start, end) {
   const e = new Date(ey, em - 1, ed);
   return Math.round((e - s) / 86400000) + 1;
 }
+
+const CERT_ICON = {
+  safe_pass: ShieldCheck,
+  manual_handling: HardHat,
+  cscs: Truck,
+  first_aid: HeartPulse,
+  other: Award,
+};
 
 export default function StaffPage() {
   const [section, setSection] = useState("staff");
@@ -55,17 +91,14 @@ export default function StaffPage() {
 
   return (
     <div>
-      <div className="eyebrow" style={{ marginTop: 0 }}>
-        Staff
-        <div className="eyebrow-sub">Staff records with training nested under each name, and holidays — 5-day warning on expiring training.</div>
-      </div>
-
-      <div className="pill-row">
-        <button className={`pill-btn ${section === "staff" ? "active" : ""}`} onClick={() => setSection("staff")}>
-          <GraduationCap size={13} style={{ marginRight: 5, verticalAlign: -2 }} /> Staff Records
+      <div className="subtabs">
+        <button type="button" className={`subtab ${section === "staff" ? "active" : ""}`} onClick={() => setSection("staff")}>
+          <GraduationCap size={15} />
+          <span>Staff &amp; certs</span>
         </button>
-        <button className={`pill-btn ${section === "holidays" ? "active" : ""}`} onClick={() => setSection("holidays")}>
-          <Sun size={13} style={{ marginRight: 5, verticalAlign: -2 }} /> Holidays
+        <button type="button" className={`subtab ${section === "holidays" ? "active" : ""}`} onClick={() => setSection("holidays")}>
+          <Sun size={15} />
+          <span>Holidays</span>
         </button>
       </div>
 
@@ -92,17 +125,482 @@ export default function StaffPage() {
   );
 }
 
+// ---------- Staff & certs ----------
+
 function StaffRecordsSection({ employees, trainings, onSaved }) {
-  const [expanded, setExpanded] = useState({});
+  const [openId, setOpenId] = useState(null);
+  const [showAddEmployee, setShowAddEmployee] = useState(false);
+  const [banner, setBanner] = useState(null);
+
+  function flash(type, text) {
+    setBanner({ type, text });
+    window.setTimeout(() => setBanner(null), 3000);
+  }
+
+  // Who needs a course booked: expired or due-soon on any cert, or missing a
+  // core card altogether.
+  const attention = useMemo(() => {
+    const items = [];
+    employees.forEach((emp) => {
+      const rows = trainings.filter((t) => t.employee_id === emp.id);
+      coreCertSummary(rows).forEach((c) => {
+        if (c.status === "missing") items.push({ emp, text: `no ${c.type.label}`, level: "missing" });
+        else if (c.status === "expired") items.push({ emp, text: `${c.type.label} expired ${shortDate(c.row.expiry_date)}`, level: "expired" });
+        else if (c.status === "due-soon") items.push({ emp, text: `${c.type.label} due ${shortDate(c.row.expiry_date)}`, level: "due-soon" });
+      });
+      rows
+        .filter((r) => !CERT_TYPE_BY_KEY[certTypeOf(r)]?.core)
+        .forEach((r) => {
+          const s = expiryStatus(r.expiry_date);
+          if (s === "expired") items.push({ emp, text: `${certLabel(r)} expired ${shortDate(r.expiry_date)}`, level: "expired" });
+          if (s === "due-soon") items.push({ emp, text: `${certLabel(r)} due ${shortDate(r.expiry_date)}`, level: "due-soon" });
+        });
+    });
+    const order = { expired: 0, "due-soon": 1, missing: 2 };
+    return items.sort((a, b) => order[a.level] - order[b.level]);
+  }, [employees, trainings]);
+
+  return (
+    <div>
+      {banner && (
+        <div className={`banner ${banner.type}`}>
+          {banner.type === "success" ? <Check size={16} color="var(--success)" /> : <AlertCircle size={16} color="var(--danger)" />}
+          <span style={{ color: "var(--text)", fontWeight: 600 }}>{banner.text}</span>
+        </div>
+      )}
+
+      {attention.length > 0 && (
+        <div className="attention card">
+          <div className="attention-title">Needs attention</div>
+          {attention.map((a, i) => (
+            <button
+              key={`${a.emp.id}-${i}`}
+              type="button"
+              className="attention-row"
+              onClick={() => setOpenId(a.emp.id)}
+            >
+              <span className={`attention-dot ${a.level}`} />
+              <span className="attention-name">{a.emp.full_name}</span>
+              <span className="attention-text">{a.text}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+        {employees.length === 0 && (
+          <div className="empty-state" style={{ padding: 24 }}>
+            <div className="empty-state-title">No staff yet</div>
+            <div>Add the first person below.</div>
+          </div>
+        )}
+        {employees.map((emp) => (
+          <EmployeeCard
+            key={emp.id}
+            employee={emp}
+            certs={trainings.filter((t) => t.employee_id === emp.id)}
+            open={openId === emp.id}
+            onToggle={() => setOpenId(openId === emp.id ? null : emp.id)}
+            onSaved={onSaved}
+            onFlash={flash}
+          />
+        ))}
+      </div>
+
+      {showAddEmployee ? (
+        <AddEmployeeForm
+          onCancel={() => setShowAddEmployee(false)}
+          onSaved={() => {
+            setShowAddEmployee(false);
+            flash("success", "Employee added.");
+            onSaved();
+          }}
+        />
+      ) : (
+        <button type="button" className="btn-secondary" onClick={() => setShowAddEmployee(true)}>
+          <Plus size={15} /> Add an employee
+        </button>
+      )}
+    </div>
+  );
+}
+
+function CertChip({ summary }) {
+  const { type, row, count, status } = summary;
+  if (status === "missing") {
+    return <span className="cert-chip missing">{type.short}</span>;
+  }
+  const when = row.expiry_date ? shortDate(row.expiry_date) : "no expiry";
+  const label = status === "expired" ? "expired" : when;
+  return (
+    <span className={`cert-chip ${status}`}>
+      {type.short}
+      {count > 1 ? ` ×${count}` : ""} · {label}
+    </span>
+  );
+}
+
+function EmployeeCard({ employee, certs, open, onToggle, onSaved, onFlash }) {
+  const [adding, setAdding] = useState(null); // cert type key being added, or null
+  const [editingId, setEditingId] = useState(null);
+  const summary = coreCertSummary(certs);
+  const sorted = [...certs].sort((a, b) => {
+    const ta = CERT_TYPES.findIndex((t) => t.key === certTypeOf(a));
+    const tb = CERT_TYPES.findIndex((t) => t.key === certTypeOf(b));
+    if (ta !== tb) return ta - tb;
+    return (a.expiry_date || "") < (b.expiry_date || "") ? -1 : 1;
+  });
+
+  return (
+    <div className="card" style={{ padding: 0 }}>
+      <button type="button" className="delivery-row" onClick={onToggle}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="delivery-row-title">
+            <span>{employee.full_name}</span>
+            {employee.role && <span className="delivery-row-sub" style={{ marginTop: 0 }}>{employee.role}</span>}
+          </div>
+          <div className="cert-chips">
+            {summary.map((s) => (
+              <CertChip key={s.type.key} summary={s} />
+            ))}
+            {certs.filter((c) => !CERT_TYPE_BY_KEY[certTypeOf(c)]?.core).length > 0 && (
+              <span className="cert-chip other">+{certs.filter((c) => !CERT_TYPE_BY_KEY[certTypeOf(c)]?.core).length} more</span>
+            )}
+          </div>
+        </div>
+        {open ? <ChevronUp size={16} color="var(--text-muted)" /> : <ChevronDown size={16} color="var(--text-muted)" />}
+      </button>
+
+      {open && (
+        <div className="delivery-edit">
+          {sorted.length === 0 && <div className="record-row-sub" style={{ marginBottom: 10 }}>No certs on file yet.</div>}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+            {sorted.map((row) =>
+              editingId === row.id ? (
+                <CertForm
+                  key={row.id}
+                  employeeId={employee.id}
+                  row={row}
+                  onCancel={() => setEditingId(null)}
+                  onSaved={(msg) => {
+                    setEditingId(null);
+                    onFlash("success", msg);
+                    onSaved();
+                  }}
+                />
+              ) : (
+                <CertRow key={row.id} row={row} onEdit={() => setEditingId(row.id)} />
+              )
+            )}
+          </div>
+
+          {adding ? (
+            <CertForm
+              employeeId={employee.id}
+              typeKey={adding}
+              onCancel={() => setAdding(null)}
+              onSaved={(msg) => {
+                setAdding(null);
+                onFlash("success", msg);
+                onSaved();
+              }}
+            />
+          ) : (
+            <>
+              <div className="label" style={{ marginBottom: 6 }}>
+                Add a cert
+              </div>
+              <div className="cert-type-grid">
+                {CERT_TYPES.map((t) => {
+                  const Icon = CERT_ICON[t.key];
+                  return (
+                    <button key={t.key} type="button" className="cert-type-btn" onClick={() => setAdding(t.key)}>
+                      <Icon size={18} color="var(--accent)" />
+                      <span>{t.short}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          <details className="more-details" style={{ marginTop: 12 }}>
+            <summary>Employee details</summary>
+            <div className="record-row-sub" style={{ marginTop: 6 }}>
+              {employee.annual_holiday_allowance} holiday days/yr
+              {employee.start_date ? ` · started ${shortDate(employee.start_date)}` : ""}
+            </div>
+            {employee.notes && <div className="record-row-sub">{employee.notes}</div>}
+          </details>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CertRow({ row, onEdit }) {
+  const key = certTypeOf(row);
+  const Icon = CERT_ICON[key] || Award;
+  const status = expiryStatus(row.expiry_date);
+  const [opening, setOpening] = useState(false);
+
+  async function openFile(e) {
+    e.stopPropagation();
+    if (!row.file_path) return;
+    setOpening(true);
+    try {
+      const { data } = await supabase.storage.from("admin-documents").createSignedUrl(row.file_path, 3600);
+      if (data?.signedUrl) window.open(data.signedUrl, "_blank", "noreferrer");
+    } finally {
+      setOpening(false);
+    }
+  }
+
+  return (
+    <div className="cert-row">
+      <button type="button" className="cert-row-main" onClick={onEdit}>
+        <Icon size={16} color="var(--accent)" />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="cert-row-title">{certLabel(row)}</div>
+          <div className="cert-row-sub">
+            {row.expiry_date ? `Expires ${shortDate(row.expiry_date)}` : "No expiry"}
+            {row.card_number ? ` · No. ${row.card_number}` : ""}
+          </div>
+        </div>
+        <span className={`status-badge status-${status}`}>{EXPIRY_STATUS_LABEL[status]}</span>
+      </button>
+      {row.file_path && (
+        <button type="button" className="icon-btn" title={row.file_name || "Open file"} onClick={openFile} disabled={opening}>
+          {opening ? <Loader2 size={14} className="spin" /> : <Paperclip size={14} color="var(--text-muted)" />}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Add (typeKey set) or edit (row set) one cert. Expiry fills in from the date
+// obtained and the card's usual validity; it stays editable.
+function CertForm({ employeeId, typeKey, row, onCancel, onSaved }) {
+  const isEdit = !!row;
+  const initialType = isEdit ? certTypeOf(row) : typeKey;
+  const [type, setType] = useState(initialType);
+  const [form, setForm] = useState(() => ({
+    detail: row?.cert_detail || "",
+    other_name: initialType === "other" ? row?.training_name || "" : "",
+    card_number: row?.card_number || "",
+    completed_date: row?.completed_date || (isEdit ? "" : dateKey(new Date())),
+    expiry_date: row?.expiry_date || (isEdit ? "" : addYears(dateKey(new Date()), CERT_TYPE_BY_KEY[initialType]?.validYears)),
+    notes: row?.notes || "",
+  }));
+  const [file, setFile] = useState(null);
+  const [errors, setErrors] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState("");
+  const typeDef = CERT_TYPE_BY_KEY[type];
+
+  function setField(key, value) {
+    setForm((f) => ({ ...f, [key]: value }));
+    if (errors[key]) setErrors((e) => ({ ...e, [key]: false }));
+  }
+
+  function setObtained(value) {
+    setForm((f) => ({
+      ...f,
+      completed_date: value,
+      expiry_date: typeDef?.validYears && value ? addYears(value, typeDef.validYears) : f.expiry_date,
+    }));
+  }
+
+  function changeType(key) {
+    setType(key);
+    const def = CERT_TYPE_BY_KEY[key];
+    setForm((f) => ({
+      ...f,
+      detail: "",
+      expiry_date: def?.validYears && f.completed_date ? addYears(f.completed_date, def.validYears) : f.expiry_date,
+    }));
+  }
+
+  function displayName() {
+    if (type === "other") return form.other_name.trim();
+    const label = typeDef.label;
+    return form.detail ? `${label} - ${form.detail}` : label;
+  }
+
+  async function handleSave() {
+    const e = {};
+    if (type === "other" && !form.other_name.trim()) e.other_name = true;
+    if (type === "cscs" && !form.detail) e.detail = true;
+    setErrors(e);
+    if (Object.keys(e).length) return;
+    setSaving(true);
+    setError("");
+    try {
+      let filePath = row?.file_path || null;
+      let fileName = row?.file_name || null;
+      if (file) {
+        const ext = file.name.split(".").pop();
+        const newPath = `training/${uid()}.${ext}`;
+        const { error: uploadError } = await supabase.storage.from("admin-documents").upload(newPath, file.file, {
+          contentType: file.type,
+          upsert: false,
+        });
+        if (uploadError) throw uploadError;
+        if (row?.file_path) await supabase.storage.from("admin-documents").remove([row.file_path]);
+        filePath = newPath;
+        fileName = file.name;
+      }
+      const payload = {
+        employee_id: employeeId,
+        cert_type: type,
+        cert_detail: type === "cscs" ? form.detail || null : null,
+        training_name: displayName(),
+        card_number: form.card_number.trim() || null,
+        completed_date: form.completed_date || null,
+        expiry_date: form.expiry_date || null,
+        notes: form.notes.trim() || null,
+        file_path: filePath,
+        file_name: fileName,
+      };
+      const { error: dbError } = isEdit
+        ? await supabase.from("employee_training").update(payload).eq("id", row.id)
+        : await supabase.from("employee_training").insert(payload);
+      if (dbError) throw dbError;
+      onSaved(isEdit ? "Cert updated." : `${typeDef.label} added.`);
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Couldn't save this cert.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!window.confirm(`Delete ${certLabel(row)}?`)) return;
+    setDeleting(true);
+    setError("");
+    try {
+      if (row.file_path) await supabase.storage.from("admin-documents").remove([row.file_path]);
+      const { error: dbError } = await supabase.from("employee_training").delete().eq("id", row.id);
+      if (dbError) throw dbError;
+      onSaved("Cert deleted.");
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Couldn't delete this cert.");
+      setDeleting(false);
+    }
+  }
+
+  const Icon = CERT_ICON[type] || Award;
+
+  return (
+    <div className="card cert-form">
+      <div className="cert-form-head">
+        <Icon size={18} color="var(--accent)" />
+        <span>{isEdit ? "Edit" : "Add"} {typeDef?.label}</span>
+        <button type="button" className="icon-btn" style={{ marginLeft: "auto" }} onClick={onCancel} disabled={saving} title="Cancel">
+          <X size={16} color="var(--text-muted)" />
+        </button>
+      </div>
+
+      {error && (
+        <div className="hint error" style={{ marginBottom: 8 }}>
+          <AlertCircle size={13} /> {error}
+        </div>
+      )}
+
+      {isEdit && (
+        <div className="pill-row" style={{ marginBottom: 10 }}>
+          {CERT_TYPES.map((t) => (
+            <button key={t.key} type="button" className={`pill-btn small ${type === t.key ? "active" : ""}`} onClick={() => changeType(t.key)}>
+              {t.short}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {type === "cscs" && (
+        <div className="field">
+          <label className="label">
+            Card type <span className="req">*</span>
+          </label>
+          <select className={`input ${errors.detail ? "error" : ""}`} value={form.detail} onChange={(e) => setField("detail", e.target.value)}>
+            <option value="">Select...</option>
+            {typeDef.details.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+          {errors.detail && <div className="hint error">Pick the card</div>}
+        </div>
+      )}
+
+      {type === "other" && (
+        <div className="field">
+          <label className="label">
+            Cert / course name <span className="req">*</span>
+          </label>
+          <input
+            className={`input ${errors.other_name ? "error" : ""}`}
+            type="text"
+            placeholder="e.g. Abrasive Wheels"
+            value={form.other_name}
+            onChange={(e) => setField("other_name", e.target.value)}
+          />
+          {errors.other_name && <div className="hint error">Required</div>}
+        </div>
+      )}
+
+      <div className="two-col">
+        <div className="field">
+          <label className="label">Date obtained</label>
+          <input className="input" type="date" value={form.completed_date} onChange={(e) => setObtained(e.target.value)} />
+        </div>
+        <div className="field">
+          <label className="label">Expires{typeDef?.validYears ? ` (${typeDef.validYears} yrs)` : ""}</label>
+          <input className="input" type="date" value={form.expiry_date} onChange={(e) => setField("expiry_date", e.target.value)} />
+        </div>
+      </div>
+
+      <div className="two-col">
+        <div className="field">
+          <label className="label">Card number</label>
+          <input className="input" type="text" value={form.card_number} onChange={(e) => setField("card_number", e.target.value)} />
+        </div>
+        <div className="field">
+          <label className="label">Photo of card {row?.file_name && <span style={{ fontWeight: 400 }}>(have one)</span>}</label>
+          <AdminFileUpload value={file} onChange={setFile} label={row?.file_name ? "Replace" : "Attach"} />
+        </div>
+      </div>
+
+      <details className="more-details">
+        <summary>Notes</summary>
+        <div className="field">
+          <textarea className="input" rows={2} value={form.notes} onChange={(e) => setField("notes", e.target.value)} />
+        </div>
+      </details>
+
+      <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+        <button type="button" className="btn-primary" style={{ flex: 1 }} onClick={handleSave} disabled={saving || deleting}>
+          {saving ? <Loader2 size={16} className="spin" /> : <Check size={16} />} {saving ? "Saving..." : "Save"}
+        </button>
+        {isEdit && (
+          <button type="button" className="btn-secondary btn-danger-outline" style={{ width: "auto" }} onClick={handleDelete} disabled={saving || deleting} title="Delete">
+            {deleting ? <Loader2 size={16} className="spin" /> : <Trash2 size={16} />}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AddEmployeeForm({ onCancel, onSaved }) {
   const [form, setForm] = useState({ full_name: "", role: "", start_date: "", annual_holiday_allowance: "20", notes: "" });
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
   const [submitError, setSubmitError] = useState("");
-
-  function toggleExpand(id) {
-    setExpanded((e) => ({ ...e, [id]: !e[id] }));
-  }
 
   function setField(key, value) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -127,9 +625,6 @@ function StaffRecordsSection({ employees, trainings, onSaved }) {
         created_by: userData?.user?.id || null,
       });
       if (insertError) throw insertError;
-      setForm({ full_name: "", role: "", start_date: "", annual_holiday_allowance: "20", notes: "" });
-      setSubmitted(true);
-      setTimeout(() => setSubmitted(false), 2500);
       onSaved();
     } catch (err) {
       console.error(err);
@@ -140,87 +635,39 @@ function StaffRecordsSection({ employees, trainings, onSaved }) {
   }
 
   return (
-    <div>
-      {submitted && (
-        <div className="banner success">
-          <Check size={16} color="var(--success)" />
-          <span style={{ color: "var(--text)", fontWeight: 600 }}>Employee added.</span>
-        </div>
-      )}
+    <div className="card cert-form">
+      <div className="cert-form-head">
+        <Plus size={18} color="var(--accent)" />
+        <span>Add an employee</span>
+        <button type="button" className="icon-btn" style={{ marginLeft: "auto" }} onClick={onCancel} disabled={submitting} title="Cancel">
+          <X size={16} color="var(--text-muted)" />
+        </button>
+      </div>
       {submitError && (
-        <div className="banner error">
-          <AlertCircle size={16} color="var(--danger)" />
-          <span>{submitError}</span>
+        <div className="hint error" style={{ marginBottom: 8 }}>
+          <AlertCircle size={13} /> {submitError}
         </div>
       )}
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
-        {employees.length === 0 && (
-          <div className="empty-state" style={{ padding: 24 }}>
-            <div className="empty-state-title">No employees yet</div>
-            <div>Add your first employee below.</div>
-          </div>
-        )}
-        {employees.map((emp) => {
-          const empTrainings = trainings.filter((t) => t.employee_id === emp.id);
-          const isOpen = !!expanded[emp.id];
-          return (
-            <div className="record-row" key={emp.id}>
-              <button
-                type="button"
-                onClick={() => toggleExpand(emp.id)}
-                style={{ background: "none", border: "none", padding: 0, width: "100%", textAlign: "left", cursor: "pointer", color: "inherit" }}
-              >
-                <div className="record-row-top">
-                  <div className="record-row-title">{emp.full_name}</div>
-                  <span className="record-row-sub" style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    {empTrainings.length} cert{empTrainings.length === 1 ? "" : "s"}
-                    {isOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                  </span>
-                </div>
-                {emp.role && <div className="record-row-sub">{emp.role}</div>}
-                <div className="record-row-sub">{emp.annual_holiday_allowance} days/yr{emp.start_date ? ` · Started ${emp.start_date}` : ""}</div>
-              </button>
-
-              {isOpen && (
-                <div style={{ marginTop: 4, paddingTop: 10, borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 8 }}>
-                  {empTrainings.length === 0 ? (
-                    <div className="record-row-sub">No certs or training records yet.</div>
-                  ) : (
-                    empTrainings.map((row) => <EmployeeTrainingRow key={row.id} row={row} onChanged={onSaved} />)
-                  )}
-                  <AddTrainingInline employeeId={emp.id} onSaved={onSaved} />
-                </div>
-              )}
-            </div>
-          );
-        })}
+      <div className="two-col">
+        <div className="field">
+          <label className="label">
+            Full name <span className="req">*</span>
+          </label>
+          <input className={`input ${errors.full_name ? "error" : ""}`} type="text" value={form.full_name} onChange={(e) => setField("full_name", e.target.value)} />
+          {errors.full_name && <div className="hint error">Required</div>}
+        </div>
+        <div className="field">
+          <label className="label">Role</label>
+          <input className="input" type="text" placeholder="e.g. Foreman" value={form.role} onChange={(e) => setField("role", e.target.value)} />
+        </div>
       </div>
-
-      <div className="eyebrow">Add an employee</div>
-      <div className="field">
-        <label className="label">
-          Full name <span className="req">*</span>
-        </label>
-        <input
-          className={`input ${errors.full_name ? "error" : ""}`}
-          type="text"
-          value={form.full_name}
-          onChange={(e) => setField("full_name", e.target.value)}
-        />
-        {errors.full_name && <div className="hint error">Required</div>}
-      </div>
-      <div className="field">
-        <label className="label">Role</label>
-        <input className="input" type="text" placeholder="e.g. Foreman" value={form.role} onChange={(e) => setField("role", e.target.value)} />
-      </div>
-      <div style={{ display: "flex", gap: 10 }}>
-        <div className="field" style={{ flex: 1 }}>
+      <div className="two-col">
+        <div className="field">
           <label className="label">Start date</label>
           <input className="input" type="date" value={form.start_date} onChange={(e) => setField("start_date", e.target.value)} />
         </div>
-        <div className="field" style={{ flex: 1 }}>
-          <label className="label">Annual holiday allowance</label>
+        <div className="field">
+          <label className="label">Holiday days / yr</label>
           <input
             className="input"
             type="number"
@@ -231,331 +678,16 @@ function StaffRecordsSection({ employees, trainings, onSaved }) {
           />
         </div>
       </div>
-      <div className="field">
-        <label className="label">Notes</label>
-        <textarea className="input" rows={2} value={form.notes} onChange={(e) => setField("notes", e.target.value)} />
-      </div>
+      <details className="more-details">
+        <summary>Notes</summary>
+        <div className="field">
+          <textarea className="input" rows={2} value={form.notes} onChange={(e) => setField("notes", e.target.value)} />
+        </div>
+      </details>
       <button className="btn-primary" onClick={handleSubmit} disabled={submitting}>
         {submitting ? <Loader2 size={17} className="spin" /> : <Plus size={17} />}
         {submitting ? "Saving..." : "Add employee"}
       </button>
-    </div>
-  );
-}
-
-function EmployeeTrainingRow({ row, onChanged }) {
-  const [fileUrl, setFileUrl] = useState(null);
-  const [deleting, setDeleting] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const status = expiryStatus(row.expiry_date);
-
-  async function openFile() {
-    if (fileUrl) {
-      window.open(fileUrl, "_blank", "noreferrer");
-      return;
-    }
-    if (!row.file_path) return;
-    const { data } = await supabase.storage.from("admin-documents").createSignedUrl(row.file_path, 3600);
-    if (data?.signedUrl) {
-      setFileUrl(data.signedUrl);
-      window.open(data.signedUrl, "_blank", "noreferrer");
-    }
-  }
-
-  async function handleDelete() {
-    if (!window.confirm(`Delete "${row.training_name}"? This can't be undone.`)) return;
-    setDeleting(true);
-    try {
-      if (row.file_path) {
-        await supabase.storage.from("admin-documents").remove([row.file_path]);
-      }
-      const { error } = await supabase.from("employee_training").delete().eq("id", row.id);
-      if (error) throw error;
-      onChanged();
-    } catch (err) {
-      console.error(err);
-      window.alert(err.message || "Something went wrong deleting this record.");
-      setDeleting(false);
-    }
-  }
-
-  if (editing) {
-    return (
-      <TrainingRowEditForm
-        row={row}
-        onCancel={() => setEditing(false)}
-        onSaved={() => {
-          setEditing(false);
-          setFileUrl(null);
-          onChanged();
-        }}
-      />
-    );
-  }
-
-  return (
-    <div className="record-row" style={{ background: "var(--surface-2)" }}>
-      <div className="record-row-top">
-        <div className="record-row-title">{row.training_name}</div>
-        <span className={`status-badge status-${status}`}>{EXPIRY_STATUS_LABEL[status]}</span>
-      </div>
-      <div className="record-row-meta">
-        <span>{row.expiry_date ? `Expires ${row.expiry_date}` : "No expiry"}</span>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {row.file_path && (
-            <button type="button" className="record-file-link" onClick={openFile} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
-              <Paperclip size={11} /> {row.file_name || "File"}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => setEditing(true)}
-            style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "var(--accent)", display: "flex", alignItems: "center", gap: 4 }}
-          >
-            <Pencil size={12} /> Edit
-          </button>
-          <button
-            type="button"
-            onClick={handleDelete}
-            disabled={deleting}
-            style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "var(--danger)", display: "flex", alignItems: "center", gap: 4 }}
-          >
-            {deleting ? <Loader2 size={12} className="spin" /> : <Trash2 size={12} />} Delete
-          </button>
-        </div>
-      </div>
-      {row.notes && <div className="record-row-sub">{row.notes}</div>}
-    </div>
-  );
-}
-
-function TrainingRowEditForm({ row, onCancel, onSaved }) {
-  const [form, setForm] = useState({
-    training_name: row.training_name || "",
-    completed_date: row.completed_date || "",
-    expiry_date: row.expiry_date || "",
-    notes: row.notes || "",
-  });
-  const [file, setFile] = useState(null);
-  const [errors, setErrors] = useState({});
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState("");
-
-  function setField(key, value) {
-    setForm((f) => ({ ...f, [key]: value }));
-    if (errors[key]) setErrors((e) => ({ ...e, [key]: false }));
-  }
-
-  async function handleSave() {
-    if (!form.training_name.trim()) {
-      setErrors({ training_name: true });
-      return;
-    }
-    setSaving(true);
-    setSaveError("");
-    try {
-      let filePath = row.file_path;
-      let fileName = row.file_name;
-      if (file) {
-        const ext = file.name.split(".").pop();
-        const newPath = `training/${uid()}.${ext}`;
-        const { error: uploadError } = await supabase.storage.from("admin-documents").upload(newPath, file.file, {
-          contentType: file.type,
-          upsert: false,
-        });
-        if (uploadError) throw uploadError;
-        if (row.file_path) {
-          await supabase.storage.from("admin-documents").remove([row.file_path]);
-        }
-        filePath = newPath;
-        fileName = file.name;
-      }
-
-      const { error } = await supabase
-        .from("employee_training")
-        .update({
-          training_name: form.training_name.trim(),
-          completed_date: form.completed_date || null,
-          expiry_date: form.expiry_date || null,
-          notes: form.notes.trim() || null,
-          file_path: filePath,
-          file_name: fileName,
-        })
-        .eq("id", row.id);
-      if (error) throw error;
-      onSaved();
-    } catch (err) {
-      console.error(err);
-      setSaveError(err.message || "Something went wrong saving changes.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="card" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {saveError && (
-        <div className="banner error" style={{ marginBottom: 0 }}>
-          <AlertCircle size={16} color="var(--danger)" />
-          <span>{saveError}</span>
-        </div>
-      )}
-      <div className="field" style={{ marginBottom: 0 }}>
-        <label className="label">
-          Training / cert name <span className="req">*</span>
-        </label>
-        <input
-          className={`input ${errors.training_name ? "error" : ""}`}
-          type="text"
-          value={form.training_name}
-          onChange={(e) => setField("training_name", e.target.value)}
-        />
-        {errors.training_name && <div className="hint error">Required</div>}
-      </div>
-      <div style={{ display: "flex", gap: 10 }}>
-        <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-          <label className="label">Date obtained</label>
-          <input className="input" type="date" value={form.completed_date} onChange={(e) => setField("completed_date", e.target.value)} />
-        </div>
-        <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-          <label className="label">Expiry date</label>
-          <input className="input" type="date" value={form.expiry_date} onChange={(e) => setField("expiry_date", e.target.value)} />
-        </div>
-      </div>
-      <div className="field" style={{ marginBottom: 0 }}>
-        <label className="label">Notes</label>
-        <textarea className="input" rows={2} value={form.notes} onChange={(e) => setField("notes", e.target.value)} />
-      </div>
-      <div className="field" style={{ marginBottom: 0 }}>
-        <label className="label">Replace cert photo / file {row.file_name && <span style={{ fontWeight: 400 }}>(currently: {row.file_name})</span>}</label>
-        <AdminFileUpload value={file} onChange={setFile} label="Upload a new file to replace it" />
-      </div>
-      <div style={{ display: "flex", gap: 10 }}>
-        <button type="button" className="btn-secondary" onClick={onCancel} disabled={saving}>
-          Cancel
-        </button>
-        <button type="button" className="btn-primary" onClick={handleSave} disabled={saving}>
-          {saving ? <Loader2 size={17} className="spin" /> : <Check size={17} />}
-          {saving ? "Saving..." : "Save changes"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function AddTrainingInline({ employeeId, onSaved }) {
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ training_name: "", completed_date: "", expiry_date: "", notes: "" });
-  const [file, setFile] = useState(null);
-  const [errors, setErrors] = useState({});
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState("");
-
-  function setField(key, value) {
-    setForm((f) => ({ ...f, [key]: value }));
-    if (errors[key]) setErrors((e) => ({ ...e, [key]: false }));
-  }
-
-  async function handleSubmit() {
-    setSubmitError("");
-    if (!form.training_name.trim()) {
-      setErrors({ training_name: true });
-      return;
-    }
-    setSubmitting(true);
-    try {
-      let filePath = null;
-      let fileName = null;
-      if (file) {
-        const ext = file.name.split(".").pop();
-        filePath = `training/${uid()}.${ext}`;
-        const { error: uploadError } = await supabase.storage.from("admin-documents").upload(filePath, file.file, {
-          contentType: file.type,
-          upsert: false,
-        });
-        if (uploadError) throw uploadError;
-        fileName = file.name;
-      }
-
-      const { error: insertError } = await supabase.from("employee_training").insert({
-        employee_id: employeeId,
-        training_name: form.training_name.trim(),
-        completed_date: form.completed_date || null,
-        expiry_date: form.expiry_date || null,
-        file_path: filePath,
-        file_name: fileName,
-        notes: form.notes.trim() || null,
-      });
-      if (insertError) throw insertError;
-
-      setForm({ training_name: "", completed_date: "", expiry_date: "", notes: "" });
-      setFile(null);
-      setOpen(false);
-      onSaved();
-    } catch (err) {
-      console.error(err);
-      setSubmitError(err.message || "Something went wrong saving this training record.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  if (!open) {
-    return (
-      <button type="button" className="btn-secondary" onClick={() => setOpen(true)}>
-        <Plus size={15} /> Add cert / training record
-      </button>
-    );
-  }
-
-  return (
-    <div className="card" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {submitError && (
-        <div className="banner error" style={{ marginBottom: 0 }}>
-          <AlertCircle size={16} color="var(--danger)" />
-          <span>{submitError}</span>
-        </div>
-      )}
-      <div className="field" style={{ marginBottom: 0 }}>
-        <label className="label">
-          Training / cert name <span className="req">*</span>
-        </label>
-        <input
-          className={`input ${errors.training_name ? "error" : ""}`}
-          type="text"
-          placeholder="e.g. Manual Handling, GA1"
-          value={form.training_name}
-          onChange={(e) => setField("training_name", e.target.value)}
-        />
-        {errors.training_name && <div className="hint error">Required</div>}
-      </div>
-      <div style={{ display: "flex", gap: 10 }}>
-        <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-          <label className="label">Date obtained</label>
-          <input className="input" type="date" value={form.completed_date} onChange={(e) => setField("completed_date", e.target.value)} />
-        </div>
-        <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-          <label className="label">Expiry date</label>
-          <input className="input" type="date" value={form.expiry_date} onChange={(e) => setField("expiry_date", e.target.value)} />
-        </div>
-      </div>
-      <div className="field" style={{ marginBottom: 0 }}>
-        <label className="label">Notes</label>
-        <textarea className="input" rows={2} value={form.notes} onChange={(e) => setField("notes", e.target.value)} />
-      </div>
-      <div className="field" style={{ marginBottom: 0 }}>
-        <label className="label">Cert photo / file</label>
-        <AdminFileUpload value={file} onChange={setFile} />
-      </div>
-      <div style={{ display: "flex", gap: 10 }}>
-        <button type="button" className="btn-secondary" onClick={() => setOpen(false)} disabled={submitting}>
-          Cancel
-        </button>
-        <button type="button" className="btn-primary" onClick={handleSubmit} disabled={submitting}>
-          {submitting ? <Loader2 size={17} className="spin" /> : <Plus size={17} />}
-          {submitting ? "Saving..." : "Save"}
-        </button>
-      </div>
     </div>
   );
 }

@@ -749,3 +749,25 @@ drop policy if exists "admins can delete delivery costs" on public.delivery_cost
 create policy "admins can delete delivery costs"
 on public.delivery_costs for delete to authenticated
 using (public.is_admin());
+
+-- ============================================================
+-- Staff safety certs: typed cards instead of free text
+-- ============================================================
+-- Safe Pass, Manual Handling and CSCS are now tap-to-add presets with an
+-- optional CSCS card type and a card number, so they display as chips and
+-- can be reported on. Existing rows keep their training_name and get a type
+-- guessed from it. Re-runnable.
+
+alter table public.employee_training add column if not exists cert_type text;    -- safe_pass | manual_handling | cscs | first_aid | other
+alter table public.employee_training add column if not exists cert_detail text;  -- e.g. CSCS card type "360° Excavator"
+alter table public.employee_training add column if not exists card_number text;
+
+update public.employee_training
+set cert_type = case
+  when training_name ilike '%safe pass%' then 'safe_pass'
+  when training_name ilike '%manual handling%' then 'manual_handling'
+  when training_name ilike '%cscs%' then 'cscs'
+  when training_name ilike '%first aid%' then 'first_aid'
+  else 'other'
+end
+where cert_type is null;
