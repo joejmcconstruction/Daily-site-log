@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Check, AlertCircle, Loader2, Camera, Paperclip, Plus, X, RotateCcw, FileText, ClipboardList } from "lucide-react";
 import { supabase } from "../supabaseClient";
-import { WEATHER_OPTIONS, QUANTITY_FIELDS, PROJECT_OPTIONS, MACHINE_OPTIONS, dateKey, uid } from "../lib/helpers";
+import { WEATHER_OPTIONS, QUANTITY_GROUPS, QUANTITY_FIELDS, PROJECT_OPTIONS, MACHINE_OPTIONS, dateKey, uid } from "../lib/helpers";
 import { syncExcelExport } from "../lib/exportExcel";
 import FileUpload from "./FileUpload";
 
@@ -12,24 +12,7 @@ const emptyForm = () => ({
   staff_on_site: "",
   labour_hours: "",
   description: "",
-  trench_excavated: "",
-  trench_backfilled: "",
-  esb_5inch: "",
-  esb_50mm: "",
-  public_lighting: "",
-  virgin_duct: "",
-  virgin_duct_32mm: "",
-  eir_duct: "",
-  eir_duct_32mm: "",
-  siro_duct: "",
-  ev_charger_duct: "",
-  chambers_fitted: "",
-  water_main_trench: "",
-  storm_pipework_150mm: "",
-  gully_pots_fitted: "",
-  tree_pits_excavated: "",
-  kerb_base_prepped: "",
-  road_base_prepped: "",
+  ...Object.fromEntries(QUANTITY_FIELDS.map((f) => [f.key, ""])),
   cause_of_delays: "",
   additional_work: "",
 });
@@ -54,6 +37,7 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
   const [errors, setErrors] = useState({});
   const [machineErrors, setMachineErrors] = useState({});
   const [dayworkErrors, setDayworkErrors] = useState({});
+  const [quantityTab, setQuantityTab] = useState(QUANTITY_GROUPS[0].key);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [submitError, setSubmitError] = useState("");
@@ -166,16 +150,21 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
       staff_on_site: form.staff_on_site,
       labour_hours: form.labour_hours,
       description: form.description,
-      trench_excavated: form.trench_excavated,
-      trench_backfilled: form.trench_backfilled,
-      chambers_fitted: form.chambers_fitted,
     };
+    QUANTITY_FIELDS.filter((f) => f.required).forEach((f) => {
+      req[f.key] = form[f.key];
+    });
     const newErrors = {};
     Object.entries(req).forEach(([k, v]) => {
       if (!v || String(v).trim() === "") newErrors[k] = true;
     });
     const keptPhotos = existingFiles.filter((f) => f.kind === "photo" && !removedFileIds.includes(f.id));
     if (workPhotos.length === 0 && keptPhotos.length === 0) newErrors.workPhotos = true;
+
+    // A required quantity can sit on a sub-tab that isn't showing — open the
+    // first one with a problem so the red field is actually on screen.
+    const firstGroupWithError = QUANTITY_GROUPS.find((g) => g.fields.some((f) => newErrors[f.key]));
+    if (firstGroupWithError) setQuantityTab(firstGroupWithError.key);
 
     const newMachineErrors = {};
     machines.forEach((m) => {
@@ -243,24 +232,7 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
         staff_on_site: form.staff_on_site,
         labour_hours: form.labour_hours || null,
         description: form.description,
-        trench_excavated: form.trench_excavated || null,
-        trench_backfilled: form.trench_backfilled || null,
-        esb_5inch: form.esb_5inch || null,
-        esb_50mm: form.esb_50mm || null,
-        public_lighting: form.public_lighting || null,
-        virgin_duct: form.virgin_duct || null,
-        virgin_duct_32mm: form.virgin_duct_32mm || null,
-        eir_duct: form.eir_duct || null,
-        eir_duct_32mm: form.eir_duct_32mm || null,
-        siro_duct: form.siro_duct || null,
-        ev_charger_duct: form.ev_charger_duct || null,
-        chambers_fitted: form.chambers_fitted || null,
-        water_main_trench: form.water_main_trench || null,
-        storm_pipework_150mm: form.storm_pipework_150mm || null,
-        gully_pots_fitted: form.gully_pots_fitted || null,
-        tree_pits_excavated: form.tree_pits_excavated || null,
-        kerb_base_prepped: form.kerb_base_prepped || null,
-        road_base_prepped: form.road_base_prepped || null,
+        ...Object.fromEntries(QUANTITY_FIELDS.map((f) => [f.key, form[f.key] || null])),
         cause_of_delays: form.cause_of_delays || null,
         additional_work: form.additional_work || null,
         created_by: userData?.user?.id || null,
@@ -506,29 +478,52 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
 
       <div className="eyebrow">
         Site Quantities
-        <div className="eyebrow-sub">Ducting, drainage, kerbing &amp; roads. Enter quantities for today — leave blank if not applicable.</div>
+        <div className="eyebrow-sub">Enter today's quantities under each tab — leave blank if not applicable.</div>
       </div>
-      <div className="duct-grid">
-        {QUANTITY_FIELDS.map((f) => (
-          <div className="field" key={f.key}>
-            <label className="label">
-              {f.label} {f.required && <span className="req">*</span>}
-              {f.unit && <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> ({f.unit})</span>}
-            </label>
-            <input
-              className={`input ${errors[f.key] ? "error" : ""}`}
-              type="number"
-              inputMode="decimal"
-              min="0"
-              step="any"
-              placeholder="0"
-              value={form[f.key]}
-              onChange={(e) => setField(f.key, e.target.value)}
-            />
-            {errors[f.key] && <div className="hint error">{f.label} is required</div>}
-          </div>
-        ))}
+      <div className="subtabs subtabs-grid">
+        {QUANTITY_GROUPS.map((g) => {
+          const errorCount = g.fields.filter((f) => errors[f.key]).length;
+          const filledCount = g.fields.filter((f) => String(form[f.key] ?? "").trim() !== "").length;
+          return (
+            <button
+              key={g.key}
+              type="button"
+              className={`subtab ${quantityTab === g.key ? "active" : ""}`}
+              onClick={() => setQuantityTab(g.key)}
+            >
+              {g.label}
+              {errorCount > 0 ? (
+                <span className="subtab-count error">{errorCount}</span>
+              ) : (
+                filledCount > 0 && <span className="subtab-count">{filledCount}</span>
+              )}
+            </button>
+          );
+        })}
       </div>
+      {QUANTITY_GROUPS.filter((g) => g.key === quantityTab).map((g) => (
+        <div className="duct-grid" key={g.key}>
+          {g.fields.map((f) => (
+            <div className="field" key={f.key}>
+              <label className="label">
+                {f.label} {f.required && <span className="req">*</span>}
+                {f.unit && <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> ({f.unit})</span>}
+              </label>
+              <input
+                className={`input ${errors[f.key] ? "error" : ""}`}
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="any"
+                placeholder="0"
+                value={form[f.key]}
+                onChange={(e) => setField(f.key, e.target.value)}
+              />
+              {errors[f.key] && <div className="hint error">{f.label} is required</div>}
+            </div>
+          ))}
+        </div>
+      ))}
 
       <div className="eyebrow">
         Plant / Machine Hours

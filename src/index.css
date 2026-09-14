@@ -1234,6 +1234,17 @@ select.input {
   font-family: "IBM Plex Mono", monospace;
 }
 
+.subtab-count.error {
+  background: var(--danger);
+}
+
+/* Report form quantities: four tabs won't fit one row at phone width with
+   "Substructure" and a count badge, so they sit as a 2x2 block instead. */
+.subtabs-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
 .more-details {
   margin: 2px 0 10px;
 }

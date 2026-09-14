@@ -771,3 +771,23 @@ set cert_type = case
   else 'other'
 end
 where cert_type is null;
+
+-- ============================================================
+-- Substructure and road prep quantities
+-- ============================================================
+-- Two new sub-tabs on the report form, matching QUANTITY_GROUPS in
+-- src/lib/helpers.js. All optional — blank means "not applicable today".
+-- Re-runnable.
+
+alter table public.reports add column if not exists aj_600mm numeric;
+alter table public.reports add column if not exists aj_450mm numeric;
+alter table public.reports add column if not exists aj_300mm numeric;
+alter table public.reports add column if not exists foul_pipe_4inch numeric;
+alter table public.reports add column if not exists pop_ups_installed numeric;
+alter table public.reports add column if not exists base_stone_build_up numeric;
+alter table public.reports add column if not exists house_base_reduced_dig numeric;
+
+alter table public.reports add column if not exists kerb_prep_excavation numeric;
+alter table public.reports add column if not exists kerb_prep_build_up numeric;
+alter table public.reports add column if not exists road_formation_reduced_dig numeric;
+alter table public.reports add column if not exists road_formation_stone_build_up numeric;

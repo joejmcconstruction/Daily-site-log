@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs/dist/exceljs.min.js";
 import { supabase } from "../supabaseClient";
-import { PROJECT_OPTIONS, MACHINE_OPTIONS } from "./helpers";
+import { PROJECT_OPTIONS, MACHINE_OPTIONS, QUANTITY_FIELDS } from "./helpers";
 import { renderPieChart, renderGroupedBarChart, renderStackedBarChart } from "./dashboardCharts";
 import { buildDeliveriesSheets } from "./deliveriesExcel";
 import { fetchDeliveries } from "./deliveries";
@@ -48,35 +48,22 @@ const KNOWN_TANK_CAPACITY_L = {
   "Wacker Plate": 5, // ASSUMPTION/AVERAGE: diesel reversible plate compactors in this size range (e.g. DPU5545He) run ~5L — confirm which plate model this is
 };
 
-const REPORT_HEADER = [
-  "Date",
-  "Project",
-  "Weather",
-  "Staff on site",
-  "Labour hours",
-  "Trench excavated (m)",
-  "Trench backfilled (m)",
-  'ESB 5" duct (m)',
-  "ESB 50mm duct (m)",
-  "Public lighting duct (m)",
-  "Virgin duct (m)",
-  "Virgin duct 32mm (m)",
-  "Eir duct (m)",
-  "Eir duct 32mm (m)",
-  "Siro duct (m)",
-  "EV charger duct (m)",
-  "Chambers fitted",
-  "Water main trench (m)",
-  "Storm pipework 150mm (m)",
-  "Gully pots fitted",
-  "Tree pits excavated",
-  "Kerb base prepped (m)",
-  "Road base prepped (m2)",
-  "Description",
-  "Cause of delays",
-  "Additional work",
+// Quantity columns come straight from QUANTITY_FIELDS, in the order they appear
+// on the form, so a new quantity gets its export column without touching this.
+const REPORT_COLUMNS = [
+  { header: "Date", width: 12, value: (r) => r.report_date },
+  { header: "Project", width: 18, value: (r) => r.project_name || "Unassigned" },
+  { header: "Weather", width: 12, value: (r) => r.weather },
+  { header: "Staff on site", width: 30, value: (r) => r.staff_on_site },
+  { header: "Labour hours", width: 12, value: (r) => r.labour_hours ?? "" },
+  ...QUANTITY_FIELDS.map((f) => {
+    const header = `${f.label} (${f.unit})`;
+    return { header, width: Math.min(30, Math.max(14, header.length + 2)), value: (r) => r[f.key] ?? "" };
+  }),
+  { header: "Description", width: 40, value: (r) => r.description },
+  { header: "Cause of delays", width: 30, value: (r) => r.cause_of_delays || "" },
+  { header: "Additional work", width: 30, value: (r) => r.additional_work || "" },
 ];
-const REPORT_COL_WIDTHS = [12, 18, 12, 30, 12, 16, 16, 14, 14, 18, 14, 16, 14, 16, 14, 16, 14, 18, 22, 16, 16, 18, 20, 40, 30, 30];
 
 const MACHINE_HEADER = ["Date", "Project", "Machine", "Hours", "Driver"];
 const MACHINE_COL_WIDTHS = [12, 18, 24, 10, 20];
@@ -195,40 +182,13 @@ function applyAutoFilterAndHeaderStyle(ws, colCount, lastRow) {
 
 function buildReportsSheet(wb, reports) {
   const ws = wb.addWorksheet("Daily Reports");
-  ws.columns = REPORT_HEADER.map((h, i) => ({ header: h, width: REPORT_COL_WIDTHS[i] }));
+  ws.columns = REPORT_COLUMNS.map((c) => ({ header: c.header, width: c.width }));
   const rows = reports
     .slice()
     .sort((a, b) => (a.report_date < b.report_date ? 1 : -1))
-    .map((r) => [
-      r.report_date,
-      r.project_name || "Unassigned",
-      r.weather,
-      r.staff_on_site,
-      r.labour_hours ?? "",
-      r.trench_excavated ?? "",
-      r.trench_backfilled ?? "",
-      r.esb_5inch ?? "",
-      r.esb_50mm ?? "",
-      r.public_lighting ?? "",
-      r.virgin_duct ?? "",
-      r.virgin_duct_32mm ?? "",
-      r.eir_duct ?? "",
-      r.eir_duct_32mm ?? "",
-      r.siro_duct ?? "",
-      r.ev_charger_duct ?? "",
-      r.chambers_fitted ?? "",
-      r.water_main_trench ?? "",
-      r.storm_pipework_150mm ?? "",
-      r.gully_pots_fitted ?? "",
-      r.tree_pits_excavated ?? "",
-      r.kerb_base_prepped ?? "",
-      r.road_base_prepped ?? "",
-      r.description,
-      r.cause_of_delays || "",
-      r.additional_work || "",
-    ]);
+    .map((r) => REPORT_COLUMNS.map((c) => c.value(r)));
   ws.addRows(rows);
-  applyAutoFilterAndHeaderStyle(ws, REPORT_HEADER.length, rows.length + 1);
+  applyAutoFilterAndHeaderStyle(ws, REPORT_COLUMNS.length, rows.length + 1);
   return ws;
 }
 

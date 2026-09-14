@@ -4,29 +4,72 @@ export const PROJECT_OPTIONS = ["Horizon Swords", "Tallaght School", "HML The Gl
 
 export const LABOUR_RATE_NAME = "Labour";
 
-// Every measured quantity captured on a daily report. Drives the form grid,
-// the report detail view and the Excel export columns — add a field here plus
-// a matching column in schema.sql and it flows through all three.
-export const QUANTITY_FIELDS = [
-  { key: "trench_excavated", label: "Trench excavated", unit: "m", required: true },
-  { key: "trench_backfilled", label: "Trench backfilled", unit: "m", required: true },
-  { key: "esb_5inch", label: 'ESB 5" duct laid', unit: "m", required: false },
-  { key: "esb_50mm", label: "ESB 50mm duct installed", unit: "m", required: false },
-  { key: "public_lighting", label: "Public lighting duct installed", unit: "m", required: false },
-  { key: "virgin_duct", label: "Virgin duct installed", unit: "m", required: false },
-  { key: "virgin_duct_32mm", label: "Virgin duct installed (32mm)", unit: "m", required: false },
-  { key: "eir_duct", label: "Eir duct installed", unit: "m", required: false },
-  { key: "eir_duct_32mm", label: "Eir duct installed (32mm)", unit: "m", required: false },
-  { key: "siro_duct", label: "Siro duct installed", unit: "m", required: false },
-  { key: "ev_charger_duct", label: "EV charger duct installed", unit: "m", required: false },
-  { key: "chambers_fitted", label: "Chambers fitted", unit: "units", required: true },
-  { key: "water_main_trench", label: "Water main trench excavated", unit: "m", required: false },
-  { key: "storm_pipework_150mm", label: "Storm pipework fitted (150mm)", unit: "m", required: false },
-  { key: "gully_pots_fitted", label: "Gully pots fitted", unit: "units", required: false },
-  { key: "tree_pits_excavated", label: "Tree pits excavated", unit: "units", required: false },
-  { key: "kerb_base_prepped", label: "Kerb base prepped", unit: "m", required: false },
-  { key: "road_base_prepped", label: "Road base prepped", unit: "m²", required: false },
+// Every measured quantity captured on a daily report, grouped into the sub-tabs
+// the foreman fills them in under. This is the only list: the form's fields and
+// save payload, the report detail view and the Excel export columns are all
+// built from it — add a field here plus a matching column in schema.sql and it
+// flows through everywhere.
+export const QUANTITY_GROUPS = [
+  {
+    key: "ducting",
+    label: "Ducting",
+    title: "Ducting & Trenching",
+    fields: [
+      { key: "trench_excavated", label: "Trench excavated", unit: "m", required: true },
+      { key: "trench_backfilled", label: "Trench backfilled", unit: "m", required: true },
+      { key: "esb_5inch", label: 'ESB 5" duct laid', unit: "m", required: false },
+      { key: "esb_50mm", label: "ESB 50mm duct installed", unit: "m", required: false },
+      { key: "public_lighting", label: "Public lighting duct installed", unit: "m", required: false },
+      { key: "virgin_duct", label: "Virgin duct installed", unit: "m", required: false },
+      { key: "virgin_duct_32mm", label: "Virgin duct installed (32mm)", unit: "m", required: false },
+      { key: "eir_duct", label: "Eir duct installed", unit: "m", required: false },
+      { key: "eir_duct_32mm", label: "Eir duct installed (32mm)", unit: "m", required: false },
+      { key: "siro_duct", label: "Siro duct installed", unit: "m", required: false },
+      { key: "ev_charger_duct", label: "EV charger duct installed", unit: "m", required: false },
+      { key: "chambers_fitted", label: "Chambers fitted", unit: "units", required: true },
+      { key: "water_main_trench", label: "Water main trench excavated", unit: "m", required: false },
+    ],
+  },
+  {
+    key: "drainage",
+    label: "Drainage",
+    title: "Drainage & Landscaping",
+    fields: [
+      { key: "storm_pipework_150mm", label: "Storm pipework fitted (150mm)", unit: "m", required: false },
+      { key: "gully_pots_fitted", label: "Gully pots fitted", unit: "units", required: false },
+      { key: "tree_pits_excavated", label: "Tree pits excavated", unit: "units", required: false },
+    ],
+  },
+  {
+    key: "substructure",
+    label: "Substructure",
+    title: "Substructure",
+    fields: [
+      { key: "aj_600mm", label: "AJ 600mm diameter", unit: "m", required: false },
+      { key: "aj_450mm", label: "AJ 450mm diameter", unit: "m", required: false },
+      { key: "aj_300mm", label: "AJ 300mm diameter", unit: "m", required: false },
+      { key: "foul_pipe_4inch", label: '4" foul pipe installed', unit: "m", required: false },
+      { key: "pop_ups_installed", label: "Pop ups installed", unit: "nr", required: false },
+      { key: "base_stone_build_up", label: "Stone build up to base", unit: "m³", required: false },
+      { key: "house_base_reduced_dig", label: "House base formation reduced dig", unit: "m³", required: false },
+    ],
+  },
+  {
+    key: "roads",
+    label: "Road Prep",
+    title: "Road Prep",
+    fields: [
+      { key: "kerb_prep_excavation", label: "Kerb prep excavation", unit: "m", required: false },
+      { key: "kerb_prep_build_up", label: "Kerb prep build up", unit: "m", required: false },
+      { key: "road_formation_reduced_dig", label: "Road formation reduced dig", unit: "m³", required: false },
+      { key: "road_formation_stone_build_up", label: "Road formation stone build up", unit: "m³", required: false },
+      { key: "kerb_base_prepped", label: "Kerb base prepped", unit: "m", required: false },
+      { key: "road_base_prepped", label: "Road base prepped", unit: "m²", required: false },
+    ],
+  },
 ];
+
+export const QUANTITY_FIELDS = QUANTITY_GROUPS.flatMap((g) => g.fields);
 
 export const MACHINE_OPTIONS = [
   "13T Hitachi",

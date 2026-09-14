@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { ArrowLeft, Cloud, Sun, CloudDrizzle, CloudRain, Trash2, FileText, Loader2, Wrench, Pencil, ClipboardList } from "lucide-react";
 import { supabase } from "../supabaseClient";
-import { prettyDate, shortTime, fileSizeLabel, QUANTITY_FIELDS } from "../lib/helpers";
+import { prettyDate, shortTime, fileSizeLabel, QUANTITY_GROUPS } from "../lib/helpers";
 import { syncExcelExport } from "../lib/exportExcel";
 import NewReportForm from "./NewReportForm";
 
@@ -98,7 +98,11 @@ export default function ReportDetail({ reportId, onBack, onDeleted, onUpdated })
   }
 
   const WIcon = WEATHER_ICONS[report.weather] || Cloud;
-  const quantityValues = QUANTITY_FIELDS.filter((d) => report[d.key] !== null && report[d.key] !== undefined && report[d.key] !== "");
+  // Only the sub-categories that actually have something entered today.
+  const quantityGroups = QUANTITY_GROUPS.map((g) => ({
+    ...g,
+    fields: g.fields.filter((f) => report[f.key] !== null && report[f.key] !== undefined && report[f.key] !== ""),
+  })).filter((g) => g.fields.length > 0);
   const photos = files.filter((f) => f.kind === "photo");
   const supportingFiles = files.filter((f) => f.kind === "supporting");
   const dayworkSheets = files.filter((f) => f.kind === "dayworks");
@@ -135,20 +139,25 @@ export default function ReportDetail({ reportId, onBack, onDeleted, onUpdated })
       <div className="eyebrow">Work completed</div>
       <p className="detail-text">{report.description}</p>
 
-      {quantityValues.length > 0 && (
+      {quantityGroups.length > 0 && (
         <>
           <div className="eyebrow">Site Quantities</div>
-          <div className="duct-grid">
-            {quantityValues.map((d) => (
-              <div className="card" key={d.key}>
-                <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>{d.label}</div>
-                <div style={{ fontSize: 16, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace" }}>
-                  {report[d.key]}
-                  {d.unit && <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 400 }}> {d.unit}</span>}
-                </div>
+          {quantityGroups.map((g) => (
+            <div key={g.key} style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--text-muted)", marginBottom: 6 }}>{g.title}</div>
+              <div className="duct-grid">
+                {g.fields.map((d) => (
+                  <div className="card" key={d.key}>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>{d.label}</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace" }}>
+                      {report[d.key]}
+                      {d.unit && <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 400 }}> {d.unit}</span>}
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </>
       )}
 
