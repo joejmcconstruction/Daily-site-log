@@ -79,6 +79,7 @@ export const MACHINE_OPTIONS = [
   "Wacker Neuson Excavator",
   "Yanmar 0.8T",
   "Bobcat 1T",
+  "Hyundai Duck",
   "10T Thwaites Dumper",
   "6T Thwaites Dumper",
   "Wacker Plate",

@@ -43,6 +43,7 @@ const KNOWN_TANK_CAPACITY_L = {
   "Wacker Neuson Excavator": 35, // Joe confirmed EZ28 model — spec sheet (9.3 US gal)
   "Yanmar 0.8T": 10, // ASSUMPTION/AVERAGE: no published tank spec found for this micro-class excavator — averaged from comparable sub-1T machines (e.g. Bobcat E10 below)
   "Bobcat 1T": 16, // Bobcat E10 spec sheet (4.2 US gal) — confirm
+  "Hyundai Duck": 150, // ASSUMPTION: model unknown — midway between a Hyundai R55 (~100L) and R140 (~240L); replace with the real figure
   "10T Thwaites Dumper": 72, // Thwaites MACH692 (10T) spec sheet — confirm
   "6T Thwaites Dumper": 70, // Thwaites 6T range spec sheet — confirm
   "Wacker Plate": 5, // ASSUMPTION/AVERAGE: diesel reversible plate compactors in this size range (e.g. DPU5545He) run ~5L — confirm which plate model this is
