@@ -1,4 +1,4 @@
-export const VEHICLE_CERT_TYPES = ["NCT", "Tax", "Insurance"];
+export const VEHICLE_CERT_TYPES = ["NCT", "CVRT", "Tax", "Insurance"];
 
 // 5-day notice window, per Joe's spec — matches the in-app badges and the
 // email alert job (Phase 2).
@@ -114,4 +114,107 @@ export function coreCertSummary(rows) {
     const count = rows.filter((r) => certTypeOf(r) === t.key).length;
     return { type: t, row: row || null, count, status: row ? expiryStatus(row.expiry_date) : "missing" };
   });
+}
+
+// ---------- Plant & vehicle certs ----------
+// Each machine / vehicle is one card with a chip per "slot" — the certs it
+// should always hold. A slot is satisfied by any of its types (the
+// roadworthiness test is an NCT on a car and a CVRT on a van or lorry).
+// Anything else on file shows as an extra chip. validYears fills the expiry
+// in from the date obtained; it stays editable.
+export const VEHICLE_CERT_PRESETS = [
+  { key: "NCT", label: "NCT", validYears: 1 },
+  { key: "CVRT", label: "CVRT", validYears: 1 },
+  { key: "Tax", label: "Tax", validYears: 1 },
+  { key: "Insurance", label: "Insurance", validYears: 1 },
+  { key: "Other", label: "Other", validYears: null },
+];
+
+export const VEHICLE_CERT_SLOTS = [
+  { key: "test", label: "NCT / CVRT", types: ["NCT", "CVRT"] },
+  { key: "tax", label: "Tax", types: ["Tax"] },
+  { key: "insurance", label: "Insurance", types: ["Insurance"] },
+];
+
+export const MACHINE_CERT_PRESETS = [
+  { key: "GA1", label: "GA1", validYears: 1 },
+  { key: "Insurance", label: "Insurance", validYears: 1 },
+  { key: "Service", label: "Service", validYears: 1 },
+  { key: "Other", label: "Other", validYears: null },
+];
+
+export const MACHINE_CERT_SLOTS = [{ key: "ga1", label: "GA1", types: ["GA1"] }];
+
+// GA1 (thorough examination) is for lifting equipment — the excavators.
+// Dumpers, plates and rollers have nothing mandatory, so they only show
+// what's on file.
+export function machineCertSlots(machineName) {
+  return /dumper|plate|roller/i.test(machineName || "") ? [] : MACHINE_CERT_SLOTS;
+}
+
+export const CERT_CATEGORY = {
+  machine: { presets: MACHINE_CERT_PRESETS, noun: "machine" },
+  vehicle: { presets: VEHICLE_CERT_PRESETS, noun: "vehicle" },
+};
+
+function sameType(a, b) {
+  return (a || "").trim().toLowerCase() === (b || "").trim().toLowerCase();
+}
+
+export function slotForCert(certType, slots) {
+  return slots.find((s) => s.types.some((t) => sameType(t, certType))) || null;
+}
+
+// The preset button a stored cert_type belongs to ("Other" for custom ones).
+export function presetForCert(certType, presets) {
+  return presets.find((p) => p.key !== "Other" && sameType(p.key, certType)) || presets.find((p) => p.key === "Other");
+}
+
+function latestExpiry(rows) {
+  return rows.reduce((best, r) => (!best || (r.expiry_date || "") > (best.expiry_date || "") ? r : best), null);
+}
+
+// One chip per slot (struck through when missing), then one per extra cert
+// type on file. Each chip reports the record with the latest expiry.
+export function certSlotSummary(rows, slots) {
+  const bySlot = slots.map((slot) => {
+    const matching = rows.filter((r) => slotForCert(r.cert_type, slots)?.key === slot.key);
+    const row = latestExpiry(matching);
+    return { key: slot.key, label: slot.label, row, count: matching.length, status: row ? expiryStatus(row.expiry_date) : "missing", required: true };
+  });
+  const extras = new Map();
+  rows
+    .filter((r) => !slotForCert(r.cert_type, slots))
+    .forEach((r) => {
+      const k = (r.cert_type || "").trim().toLowerCase();
+      extras.set(k, [...(extras.get(k) || []), r]);
+    });
+  const extraItems = [...extras.entries()].map(([k, list]) => {
+    const row = latestExpiry(list);
+    return { key: `extra:${k}`, label: row.cert_type, row, count: list.length, status: expiryStatus(row.expiry_date), required: false };
+  });
+  return [...bySlot, ...extraItems];
+}
+
+const STATUS_RANK = { expired: 0, "due-soon": 1, missing: 2, none: 3, valid: 4 };
+
+export function worstStatus(summary) {
+  return summary.reduce((worst, s) => (STATUS_RANK[s.status] < STATUS_RANK[worst] ? s.status : worst), "valid");
+}
+
+// Group cert rows into one entry per machine name / vehicle registration.
+// Keys are lower-cased so "191-d-123" and "191-D-123" land together.
+export function groupCertsBySubject(certs, category) {
+  const groups = new Map();
+  certs
+    .filter((c) => c.category === category)
+    .forEach((c) => {
+      const name = (c.subject_name || "").trim();
+      const key = name.toLowerCase();
+      if (!groups.has(key)) groups.set(key, { key, name, model: c.vehicle_model || "", certs: [] });
+      const g = groups.get(key);
+      g.certs.push(c);
+      if (!g.model && c.vehicle_model) g.model = c.vehicle_model;
+    });
+  return groups;
 }
