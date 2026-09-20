@@ -17,6 +17,7 @@ import {
   ScanLine,
   List,
   Euro,
+  Pencil,
 } from "lucide-react";
 import { PROJECT_OPTIONS, dateKey, prettyDate } from "../lib/helpers";
 import { syncExcelExport } from "../lib/exportExcel";
@@ -175,7 +176,7 @@ export default function DeliveriesPage({ isAdmin = false }) {
       setDrafts((prev) =>
         prev.map((d) =>
           d.id === draft.id
-            ? { ...d, status: "review", flag: true, error: `${err.message || "Couldn't read this document."} Enter it by hand.` }
+            ? { ...d, status: "review", mode: "edit", flag: true, error: `${err.message || "Couldn't read this document."} Enter it by hand.` }
             : d
         )
       );
@@ -197,7 +198,8 @@ export default function DeliveriesPage({ isAdmin = false }) {
   async function saveOne(draft) {
     const errors = validateDraft(draft);
     if (Object.keys(errors).length) {
-      patchDraft(draft.id, { errors });
+      // Open the full form so the missing field is on screen.
+      patchDraft(draft.id, { errors, mode: "edit" });
       return false;
     }
     patchDraft(draft.id, { status: "saving", errors: {}, error: "" });
@@ -949,11 +951,16 @@ function CostFields({ value, onChange }) {
   );
 }
 
+// One card per document waiting to be checked. Two faces: a one-glance
+// summary (what was read, one Save button) for the normal case, and the full
+// form behind "Fix details" for when something is wrong or missing.
 function DraftCard({ draft, isAdmin, onChange, onSave, onRemove }) {
   const reading = draft.status === "reading";
   const saving = draft.status === "saving";
   const errors = draft.errors || {};
+  const summaryMode = draft.mode !== "edit";
   const showCost = isAdmin && (draft.docType !== "docket" || draft.showCost);
+  const hasPrices = isAdmin && draft.items.some((i) => i.line_total !== "" || i.unit_price !== "");
 
   function setHeader(key, value) {
     onChange({ header: { ...draft.header, [key]: value }, errors: { ...errors, [key]: false } });
@@ -967,6 +974,14 @@ function DraftCard({ draft, isAdmin, onChange, onSave, onRemove }) {
   function setCost(key, value) {
     onChange({ cost: { ...draft.cost, [key]: value } });
   }
+
+  const typeLabel = DOC_TYPE_LABEL[draft.docType] || "Docket";
+  const headline = draft.header.supplier || (draft.file ? "Supplier not read" : "New entry");
+  const subline = [
+    `${typeLabel}${draft.header.docket_no ? ` #${draft.header.docket_no}` : ""}`,
+    draft.header.delivery_date ? prettyDate(draft.header.delivery_date) : "No date",
+    draft.header.project_name || "No project",
+  ].join(" · ");
 
   return (
     <div className="card docket-card">
@@ -991,21 +1006,58 @@ function DraftCard({ draft, isAdmin, onChange, onSave, onRemove }) {
         </button>
       </div>
 
-      {!reading && (
+      {!reading && draft.error && (
+        <div className="hint error" style={{ marginBottom: 8 }}>
+          <AlertCircle size={13} /> {draft.error}
+        </div>
+      )}
+      {!reading && draft.warnings.length > 0 && (
+        <div className="warn-list">
+          {draft.warnings.map((w, i) => (
+            <div key={i}>• {w}</div>
+          ))}
+        </div>
+      )}
+
+      {!reading && summaryMode && (
         <>
-          {draft.error && (
-            <div className="hint error" style={{ marginBottom: 8 }}>
-              <AlertCircle size={13} /> {draft.error}
-            </div>
-          )}
-          {draft.warnings.length > 0 && (
-            <div className="warn-list">
-              {draft.warnings.map((w, i) => (
-                <div key={i}>• {w}</div>
+          <div className="draft-summary">
+            <div className="draft-summary-head">{headline}</div>
+            <div className="draft-summary-sub">{subline}</div>
+            <div className="draft-items">
+              {draft.items.map((item) => (
+                <div key={item.id} className="draft-item">
+                  <span className="draft-item-qty">
+                    {item.quantity !== "" ? `${formatQuantity(item.quantity)} ${item.unit || ""}`.trim() : "—"}
+                  </span>
+                  <span className="draft-item-name">{item.product || "Unnamed item"}</span>
+                  {hasPrices && item.line_total !== "" && <span className="draft-item-price">{formatMoney(item.line_total)}</span>}
+                </div>
               ))}
             </div>
-          )}
+            {hasPrices && (draft.cost.total !== "" || draft.cost.paid) && (
+              <div className="draft-total">
+                <span>{draft.cost.total !== "" ? `Total inc VAT ${formatMoney(draft.cost.total)}` : ""}</span>
+                <span>
+                  {draft.cost.paid === "yes" ? `Paid${draft.cost.payment_method ? ` by ${draft.cost.payment_method.toLowerCase()}` : ""}` : draft.cost.paid === "no" ? "Unpaid" : ""}
+                </span>
+              </div>
+            )}
+          </div>
+          <div className="draft-actions">
+            <button className="btn-primary" style={{ flex: 1 }} onClick={onSave} disabled={saving}>
+              {saving ? <Loader2 size={17} className="spin" /> : <Check size={17} />}
+              {saving ? "Saving..." : "Save"}
+            </button>
+            <button type="button" className="btn-secondary" onClick={() => onChange({ mode: "edit" })} disabled={saving}>
+              <Pencil size={15} /> Fix details
+            </button>
+          </div>
+        </>
+      )}
 
+      {!reading && !summaryMode && (
+        <>
           <DocTypePills value={draft.docType} onChange={(t) => onChange({ docType: t })} />
 
           <HeaderFields value={draft.header} errors={errors} onChange={setHeader} docType={draft.docType} />
@@ -1048,10 +1100,17 @@ function DraftCard({ draft, isAdmin, onChange, onSave, onRemove }) {
             Check against the paper later
           </label>
 
-          <button className="btn-primary" onClick={onSave} disabled={saving}>
-            {saving ? <Loader2 size={17} className="spin" /> : <Check size={17} />}
-            {saving ? "Saving..." : "Save"}
-          </button>
+          <div className="draft-actions" style={{ marginTop: 0 }}>
+            <button className="btn-primary" style={{ flex: 1 }} onClick={onSave} disabled={saving}>
+              {saving ? <Loader2 size={17} className="spin" /> : <Check size={17} />}
+              {saving ? "Saving..." : "Save"}
+            </button>
+            {draft.docket && (
+              <button type="button" className="btn-secondary" onClick={() => onChange({ mode: "summary" })} disabled={saving}>
+                Done
+              </button>
+            )}
+          </div>
         </>
       )}
     </div>

@@ -1563,3 +1563,74 @@ select.input {
 .link-btn.danger {
   color: var(--danger);
 }
+
+/* ---------- Dockets: one-glance summary card ---------- */
+
+.draft-summary {
+  margin-bottom: 10px;
+}
+
+.draft-summary-head {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.draft-summary-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.draft-items {
+  margin: 10px 0 6px;
+  border-top: 1px solid var(--border);
+}
+
+.draft-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.draft-item-qty {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  color: var(--accent-2);
+  white-space: nowrap;
+  min-width: 52px;
+}
+
+.draft-item-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.draft-item-price {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  color: var(--success);
+  white-space: nowrap;
+}
+
+.draft-total {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  padding: 6px 0 2px;
+}
+
+.draft-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.draft-actions .btn-secondary {
+  width: auto;
+  padding-left: 14px;
+  padding-right: 14px;
+}

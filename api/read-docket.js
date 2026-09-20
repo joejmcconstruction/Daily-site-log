@@ -54,8 +54,8 @@ const DOCKET_SCHEMA = {
           raw_description: { type: "string", description: "The product line exactly as written, including any product code." },
           quantity: { ...nullable("number"), description: "Quantity delivered or bought. Net weight on weighbridge tickets." },
           unit: { type: "string", description: "One of: t, m³, m, units, loads, L, kg, bags." },
-          unit_price: { ...nullable("number"), description: "Price per unit excluding VAT, if printed. Null on documents without prices." },
-          line_total: { ...nullable("number"), description: "Line total excluding VAT, if printed or derivable as quantity × unit_price. Null on documents without prices." },
+          unit_price: { ...nullable("number"), description: "Price per unit as printed on that line. Never null when a price is printed beside the item. Null only on documents with no prices." },
+          line_total: { ...nullable("number"), description: "Line total as printed on that line (or quantity × unit_price when only a unit price is printed). Never null when a price is printed beside the item. Null only on documents with no prices." },
           vat_rate: { ...nullable("number"), description: "VAT rate for this line as a percentage, e.g. 23 or 13.5, if shown." },
           category: {
             type: "string",
@@ -69,7 +69,12 @@ const DOCKET_SCHEMA = {
     subtotal_ex_vat: { ...nullable("number"), description: "Document total excluding VAT, if printed." },
     vat_amount: { ...nullable("number"), description: "Total VAT on the document, if printed." },
     total_inc_vat: { ...nullable("number"), description: "Document grand total including VAT, if printed." },
-    currency: { type: "string", description: "Currency code, e.g. EUR. Null if no prices." },
+    prices_include_vat: {
+      ...nullable("boolean"),
+      description:
+        "True if the per-line prices you returned include VAT (typical till receipt), false if they exclude VAT (typical invoice), null if there are no prices or the document doesn't say.",
+    },
+    currency: { type: "string", description: "Currency code, e.g. EUR. Empty if no prices." },
     paid: { ...nullable("boolean"), description: "True if the document shows it was paid (PAID stamp, card/cash payment line, 'amount tendered'). False if it shows an amount still due. Null if it doesn't say." },
     payment_method: { type: "string", description: "Card, Cash, Account, Bank transfer, or as printed. Null if not shown." },
     confidence: { type: "number", description: "0 to 1: confidence the fields are right without checking the paper document." },
@@ -92,6 +97,7 @@ const DOCKET_SCHEMA = {
     "subtotal_ex_vat",
     "vat_amount",
     "total_inc_vat",
+    "prices_include_vat",
     "currency",
     "paid",
     "payment_method",
@@ -119,7 +125,7 @@ How to read them:
 - The quantity is what was delivered or bought. On a weighbridge ticket that is the NET weight (gross minus tare), never the gross. Concrete dockets give cubic metres. Merchant receipts give a Qty column; the unit is usually implied by the description (a "25kg bag" is bags, "Lgth" or "6m" is m, a count of items is units).
 - Normalise units to one of: t, m³, m, units, loads, L, kg, bags. Tonnes may be written as T, tonne, tn or TNE. Convert kg to t only on a weighbridge ticket.
 - One item per product line. Put the document's own wording (including any product code) in raw_description and a short clean name in product. If the material clearly matches one of the known product names supplied by the user, use that exact name. Skip lines that are only VAT, subtotals, discounts, deposits, delivery charges rolled into totals, or payment lines — but a separately priced delivery charge or skip hire IS an item.
-- Prices: unit_price and line_total are EXCLUDING VAT where the document shows ex-VAT figures (most merchant invoices and receipts print an ex-VAT line total and add VAT at the bottom). If a line only shows an inc-VAT figure, give that as line_total and say so in warnings. Irish VAT is 23% on most goods and 13.5% on some services and fuel; read the rate printed, don't assume.
+- Prices: every item that has a price printed beside it MUST come back with that price. Copy the figures as printed into unit_price and line_total — do not leave them null because you are unsure whether they include VAT. Then say which basis the document uses in prices_include_vat: till receipts from merchants and shops almost always print inc-VAT prices per line with a VAT summary at the bottom (true); trade invoices print ex-VAT lines and add VAT below (false). If both ex-VAT and inc-VAT figures are printed for a line, return the ex-VAT ones and set prices_include_vat false. Irish VAT is 23% on most goods and 13.5% on some services and fuel; read the rate printed, don't assume. Batteries, consumables, tools, PPE and fuel on a receipt are priced items like any other.
 - paid: true when the document shows payment taken (PAID stamp, "Card", "Visa", "Cash", "Tendered", "Change due", "Amount paid"). false when it shows a balance due or is an invoice with payment terms. null when it doesn't say.
 - category: pick the best-fit cost category for each line from the list in the schema.
 - supplier / haulier: haulier only if a separate transport company is shown.
@@ -234,6 +240,8 @@ export default async function handler(req, res) {
         docket_no: docket.docket_no,
         supplier: docket.supplier,
         items: Array.isArray(docket.items) ? docket.items.length : 0,
+        items_with_price: Array.isArray(docket.items) ? docket.items.filter((i) => typeof i.line_total === "number" || typeof i.unit_price === "number").length : 0,
+        prices_include_vat: docket.prices_include_vat,
         total_inc_vat: docket.total_inc_vat,
         confidence: docket.confidence,
         transcript_chars: (docket.transcript || "").length,

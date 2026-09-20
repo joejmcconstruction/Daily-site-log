@@ -202,6 +202,7 @@ export function emptyDraft({ file = null, fileName = "" } = {}) {
     previewUrl: file && isImage ? URL.createObjectURL(file) : null,
     isImage,
     status: "review",
+    mode: "edit",
     docket: null,
     docType: "docket",
     showCost: false,
@@ -260,6 +261,26 @@ export function applyDocketToDraft(draft, docket) {
       };
     });
 
+  // Till receipts print inc-VAT prices per line. Costs are tracked ex VAT, so
+  // scale them back using the document's own subtotal/total when both are
+  // printed, otherwise the line's VAT rate. Left as printed if neither exists.
+  const subtotal = numOrBlank(docket.subtotal_ex_vat);
+  const totalInc = numOrBlank(docket.total_inc_vat);
+  const anyPrice = items.some((i) => i.unit_price !== "" || i.line_total !== "");
+  if (docket.prices_include_vat === true && anyPrice) {
+    const docFactor = subtotal !== "" && totalInc !== "" && totalInc > 0 && subtotal <= totalInc ? subtotal / totalInc : null;
+    let converted = 0;
+    items.forEach((i) => {
+      const factor = docFactor ?? (i.vat_rate !== "" && i.vat_rate >= 0 ? 1 / (1 + i.vat_rate / 100) : null);
+      if (factor === null) return;
+      if (i.unit_price !== "") i.unit_price = Math.round(i.unit_price * factor * 100) / 100;
+      if (i.line_total !== "") i.line_total = Math.round(i.line_total * factor * 100) / 100;
+      converted += 1;
+    });
+    if (converted > 0) warnings.push("Receipt prices include VAT; converted to ex VAT for costing.");
+    else warnings.push("Receipt prices include VAT and no VAT rate was printed; entered as printed.");
+  }
+
   const confidence = typeof docket.confidence === "number" ? Math.max(0, Math.min(1, docket.confidence)) : null;
   const missingCore = !isIsoDate(docket.delivery_date) || items.length === 0 || items.some((i) => i.quantity === "");
   const flag = docType === "other" || missingCore || warnings.length > 0 || confidence === null || confidence < REVIEW_CONFIDENCE_THRESHOLD;
@@ -280,6 +301,9 @@ export function applyDocketToDraft(draft, docket) {
   return {
     ...draft,
     status: "review",
+    // Straight to the one-glance summary when the read is usable; open the
+    // full form only when something the save needs is missing.
+    mode: docType === "other" || missingCore ? "edit" : "summary",
     docket,
     docType: docType === "other" ? "docket" : docType,
     showCost: draft.showCost || items.some((i) => i.unit_price !== "" || i.line_total !== "") || cost.total !== "",
