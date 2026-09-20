@@ -1,6 +1,8 @@
 export const WEATHER_OPTIONS = ["Sunny", "Overcast", "Light rain", "Heavy rain", "Showers"];
 
-export const PROJECT_OPTIONS = ["Horizon Swords", "Tallaght School", "HML The Glen", "Glenageary Demo", "Farrenboley House", "Project 1", "Project 2"];
+// "General" is for business costs that don't belong to one job (fuel for the
+// vans, PPE, office bits) so they still get logged and costed.
+export const PROJECT_OPTIONS = ["Horizon Swords", "Tallaght School", "General", "HML The Glen", "Glenageary Demo", "Farrenboley House", "Project 1", "Project 2"];
 
 export const LABOUR_RATE_NAME = "Labour";
 
