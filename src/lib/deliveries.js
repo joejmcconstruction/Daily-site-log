@@ -268,7 +268,7 @@ export function applyDocketToDraft(draft, docket) {
   const totalInc = numOrBlank(docket.total_inc_vat);
   const anyPrice = items.some((i) => i.unit_price !== "" || i.line_total !== "");
   if (docket.prices_include_vat === true && anyPrice) {
-    const docFactor = subtotal !== "" && totalInc !== "" && totalInc > 0 && subtotal <= totalInc ? subtotal / totalInc : null;
+    const docFactor = subtotal !== "" && totalInc !== "" && subtotal > 0 && totalInc > 0 && subtotal <= totalInc ? subtotal / totalInc : null;
     let converted = 0;
     items.forEach((i) => {
       const factor = docFactor ?? (i.vat_rate !== "" && i.vat_rate >= 0 ? 1 / (1 + i.vat_rate / 100) : null);
