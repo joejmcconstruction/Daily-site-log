@@ -243,15 +243,28 @@ ${gaps.missingPeople.length ? `<p style="font-size:14px;margin:10px 0 4px"><b>No
 
 // ---------- sending ----------
 
-export async function sendMail({ to, cc, subject, html, text }) {
+function transport() {
   const user = requireEnv("SMTP_USER");
-  const pass = requireEnv("SMTP_PASS");
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || "smtp.gmail.com",
-    port: Number(process.env.SMTP_PORT || 465),
-    secure: (process.env.SMTP_SECURE || "true") !== "false",
-    auth: { user, pass },
-  });
+  // Gmail shows app passwords in four groups; spaces are not part of the password.
+  const pass = requireEnv("SMTP_PASS").replace(/\s+/g, "");
+  return {
+    user,
+    transporter: nodemailer.createTransport({
+      host: process.env.SMTP_HOST || "smtp.gmail.com",
+      port: Number(process.env.SMTP_PORT || 465),
+      secure: (process.env.SMTP_SECURE || "true") !== "false",
+      auth: { user, pass },
+    }),
+  };
+}
+
+export async function verifySmtp() {
+  const { transporter } = transport();
+  await transporter.verify();
+}
+
+export async function sendMail({ to, cc, subject, html, text }) {
+  const { user, transporter } = transport();
   const from = process.env.MAIL_FROM || `JMC Site App <${user}>`;
   const info = await transporter.sendMail({ from, to, cc: cc || undefined, subject, html, text });
   return info.messageId;

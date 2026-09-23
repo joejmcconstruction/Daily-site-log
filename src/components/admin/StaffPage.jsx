@@ -1181,6 +1181,8 @@ function HoursSection({ employees }) {
   const [form, setForm] = useState(() => ({ work_date: dateKey(new Date()), employee_ids: [], notes: "", ...rememberedHourDefaults() }));
   const [emailWeek, setEmailWeek] = useState("this");
   const [emailing, setEmailing] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState(null);
+  const [setupReport, setSetupReport] = useState(null);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState(null);
@@ -1321,13 +1323,25 @@ function HoursSection({ employees }) {
         const json = await res.json().catch(() => ({}));
         throw new Error(json.error || `Preview failed (${res.status}).`);
       }
-      const html = await res.text();
-      const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
-      window.open(url, "_blank", "noreferrer");
-      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+      // Shown inside the app: a new tab opened after a fetch gets blocked as
+      // a popup on phones.
+      setPreviewHtml(await res.text());
     } catch (err) {
       console.error(err);
       flash("error", err.message || "Couldn't build the preview.");
+    }
+  }
+
+  async function handleCheckSetup() {
+    setSetupReport(null);
+    try {
+      const res = await callHoursApi("/api/hours-weekly", { check: "1" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || `Check failed (${res.status}).`);
+      setSetupReport(json);
+    } catch (err) {
+      console.error(err);
+      flash("error", err.message || "Couldn't run the check.");
     }
   }
 
@@ -1505,9 +1519,42 @@ function HoursSection({ employees }) {
           {emailing ? <Loader2 size={14} className="spin" /> : <Mail size={14} />} Email to Kate
         </button>
         <div style={{ width: "100%", fontSize: 11.5, color: "var(--text-muted)" }}>
-          Goes automatically every Wednesday at 8pm. A reminder comes to you at 3pm if days or people are missing.
+          Goes automatically every Wednesday at 8pm. A reminder comes to you at 3pm if days or people are missing.{" "}
+          <button type="button" className="btn-link" style={{ margin: 0, padding: 0, fontSize: 11.5 }} onClick={handleCheckSetup}>
+            Check setup
+          </button>
         </div>
+        {setupReport && (
+          <div className="setup-report">
+            {Object.entries(setupReport.env || {}).map(([k, ok]) => (
+              <div key={k} className={ok ? "ok" : "bad"}>
+                {ok ? "✓" : "✗"} {k} {ok ? "set" : "missing in Vercel"}
+              </div>
+            ))}
+            <div className={setupReport.smtp === "ok" ? "ok" : setupReport.smtp === "not tried" ? "" : "bad"}>
+              {setupReport.smtp === "ok" ? "✓" : setupReport.smtp === "not tried" ? "·" : "✗"} Gmail login: {setupReport.smtp}
+            </div>
+            <div className={setupReport.database === "ok" ? "ok" : setupReport.database === "not tried" ? "" : "bad"}>
+              {setupReport.database === "ok" ? "✓" : setupReport.database === "not tried" ? "·" : "✗"} Hours data: {setupReport.database}
+            </div>
+            <div>Sends to {setupReport.to}{setupReport.cc ? `, copy ${setupReport.cc}` : ""}</div>
+          </div>
+        )}
       </div>
+
+      {previewHtml !== null && (
+        <div className="preview-overlay" onClick={() => setPreviewHtml(null)}>
+          <div className="preview-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="preview-head">
+              <span>Email preview</span>
+              <button type="button" className="icon-btn" onClick={() => setPreviewHtml(null)} title="Close">
+                <X size={16} color="var(--text-muted)" />
+              </button>
+            </div>
+            <iframe title="Email preview" className="preview-frame" srcDoc={previewHtml} sandbox="" />
+          </div>
+        </div>
+      )}
 
       <div className="pill-row" style={{ marginTop: 14 }}>
         {[
