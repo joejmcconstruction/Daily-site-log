@@ -833,3 +833,49 @@ drop policy if exists "users delete own pad progress, admins delete all" on publ
 create policy "users delete own pad progress, admins delete all"
 on public.pad_progress for delete to authenticated
 using (created_by = auth.uid() or public.is_admin());
+
+-- ============================================================
+-- Staff hours (admin): clock in / clock out per person per day
+-- ============================================================
+-- Entered on the Staff tab's Hours sub-tab. Pay-sensitive, so admin-only
+-- like the rest of the staff tables. Re-runnable.
+
+create table if not exists public.staff_hours (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id),
+  employee_id uuid not null references public.employees(id) on delete cascade,
+  work_date date not null,
+  clock_in time not null,
+  clock_out time not null,
+  break_minutes integer not null default 0,
+  project_name text,
+  notes text
+);
+
+create index if not exists staff_hours_date_idx on public.staff_hours (work_date desc);
+create index if not exists staff_hours_employee_idx on public.staff_hours (employee_id, work_date);
+
+alter table public.staff_hours enable row level security;
+
+drop policy if exists "admins can view staff hours" on public.staff_hours;
+create policy "admins can view staff hours"
+on public.staff_hours for select to authenticated using (public.is_admin());
+
+drop policy if exists "admins can insert staff hours" on public.staff_hours;
+create policy "admins can insert staff hours"
+on public.staff_hours for insert to authenticated with check (public.is_admin());
+
+drop policy if exists "admins can update staff hours" on public.staff_hours;
+create policy "admins can update staff hours"
+on public.staff_hours for update to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists "admins can delete staff hours" on public.staff_hours;
+create policy "admins can delete staff hours"
+on public.staff_hours for delete to authenticated using (public.is_admin());
+
+-- Staff added 2026-09-23 at Joe's request. Skipped if the name already exists.
+insert into public.employees (full_name)
+select v.full_name
+from (values ('Stephen Doyle'), ('Niall Watson'), ('Steve Shea')) as v(full_name)
+where not exists (select 1 from public.employees e where lower(e.full_name) = lower(v.full_name));

@@ -605,6 +605,60 @@ function buildPadTrackerSheet(wb, padProgress, reportById) {
   return ws;
 }
 
+// Staff clock in / out entries (admin-only table), one row each, then a
+// total-hours-by-person block driven by SUMIFS so corrections in Excel flow.
+function staffEntryHours(row) {
+  const toMin = (t) => {
+    const [h, m] = String(t || "00:00").slice(0, 5).split(":").map(Number);
+    return h * 60 + m;
+  };
+  let mins = toMin(row.clock_out) - toMin(row.clock_in);
+  if (mins < 0) mins += 24 * 60;
+  mins -= Number(row.break_minutes) || 0;
+  return Math.max(0, Math.round((mins / 60) * 100) / 100);
+}
+
+function buildStaffHoursSheet(wb, staffHours, employees) {
+  const ws = wb.addWorksheet("Staff Hours", { views: [{ state: "frozen", ySplit: 1 }] });
+  const header = ["Date", "Name", "Clock in", "Clock out", "Break (min)", "Hours", "Project", "Notes"];
+  const widths = [12, 22, 10, 10, 11, 8, 18, 30];
+  ws.columns = header.map((h, i) => ({ header: h, width: widths[i] }));
+  const nameById = {};
+  (employees || []).forEach((e) => {
+    nameById[e.id] = e.full_name;
+  });
+  const rows = (staffHours || [])
+    .slice()
+    .sort((a, b) => (a.work_date === b.work_date ? (a.clock_in < b.clock_in ? -1 : 1) : a.work_date < b.work_date ? 1 : -1))
+    .map((r) => [
+      r.work_date,
+      nameById[r.employee_id] || "Unknown",
+      String(r.clock_in || "").slice(0, 5),
+      String(r.clock_out || "").slice(0, 5),
+      Number(r.break_minutes) || 0,
+      staffEntryHours(r),
+      r.project_name || "",
+      r.notes || "",
+    ]);
+  ws.addRows(rows);
+  applyAutoFilterAndHeaderStyle(ws, header.length, rows.length + 1);
+  if (rows.length === 0) return ws;
+
+  const lastDataRow = rows.length + 1;
+  let r = lastDataRow + 3;
+  ws.getCell(`A${r}`).value = "Total hours by person";
+  ws.getCell(`A${r}`).font = { bold: true };
+  r += 1;
+  const names = Array.from(new Set(rows.map((x) => x[1]))).sort((a, b) => a.localeCompare(b));
+  names.forEach((name) => {
+    ws.getCell(`B${r}`).value = name;
+    ws.getCell(`F${r}`).value = { formula: `SUMIFS($F$2:$F$${lastDataRow},$B$2:$B$${lastDataRow},B${r})` };
+    ws.getCell(`F${r}`).font = { bold: true };
+    r += 1;
+  });
+  return ws;
+}
+
 export function buildWorkbook(data) {
   const reports = data.reports;
   const machineHours = data.machineHours;
@@ -623,6 +677,7 @@ export function buildWorkbook(data) {
   const ratesResult = buildRatesSheet(wb);
   buildCostReportSheet(wb, reports, machineHours, dayworks, reportById, ratesResult);
   buildPadTrackerSheet(wb, padProgress, reportById);
+  buildStaffHoursSheet(wb, data.staffHours || [], data.employees || []);
   buildDeliveriesSheets(wb, data.deliveries || []);
   wb.calcProperties.fullCalcOnLoad = true;
 
@@ -653,24 +708,30 @@ export async function syncExcelExport() {
 
   // fetchDeliveries() merges the admin-only delivery_costs rows in, which is
   // what puts prices on the Deliveries and Costs by Project sheets.
-  const [reportsRes, machineRes, dayworksRes, padsRes, deliveries] = await Promise.all([
+  const [reportsRes, machineRes, dayworksRes, padsRes, hoursRes, employeesRes, deliveries] = await Promise.all([
     supabase.from("reports").select("*"),
     supabase.from("machine_hours").select("*"),
     supabase.from("dayworks").select("*"),
     supabase.from("pad_progress").select("*"),
+    supabase.from("staff_hours").select("*"),
+    supabase.from("employees").select("id, full_name"),
     fetchDeliveries(),
   ]);
   if (reportsRes.error) throw reportsRes.error;
   if (machineRes.error) throw machineRes.error;
   if (dayworksRes.error) throw dayworksRes.error;
-  // Missing until the TSL SQL block is run; the workbook still builds.
+  // These tables arrive with later SQL blocks; the workbook still builds without them.
   if (padsRes.error) console.warn("pad_progress not readable:", padsRes.error.message);
+  if (hoursRes.error) console.warn("staff_hours not readable:", hoursRes.error.message);
+  if (employeesRes.error) console.warn("employees not readable:", employeesRes.error.message);
 
   const wb = buildWorkbook({
     reports: reportsRes.data || [],
     machineHours: machineRes.data || [],
     dayworks: dayworksRes.data || [],
     padProgress: padsRes.data || [],
+    staffHours: hoursRes.data || [],
+    employees: employeesRes.data || [],
     deliveries,
   });
   const buffer = await wb.xlsx.writeBuffer();
