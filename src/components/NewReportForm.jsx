@@ -1,7 +1,18 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Check, AlertCircle, Loader2, Camera, Paperclip, Plus, X, RotateCcw, FileText, ClipboardList } from "lucide-react";
 import { supabase } from "../supabaseClient";
-import { WEATHER_OPTIONS, QUANTITY_GROUPS, QUANTITY_FIELDS, PROJECT_OPTIONS, MACHINE_OPTIONS, dateKey, uid } from "../lib/helpers";
+import {
+  WEATHER_OPTIONS,
+  QUANTITY_GROUPS,
+  QUANTITY_FIELDS,
+  PROJECT_OPTIONS,
+  MACHINE_OPTIONS,
+  PAD_ACTIVITIES,
+  PAD_NUMBERS,
+  emptyPads,
+  dateKey,
+  uid,
+} from "../lib/helpers";
 import { syncExcelExport } from "../lib/exportExcel";
 import FileUpload from "./FileUpload";
 
@@ -28,6 +39,7 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
   const [form, setForm] = useState(emptyForm());
   const [machines, setMachines] = useState([]);
   const [dayworks, setDayworks] = useState([]);
+  const [pads, setPads] = useState(emptyPads());
   const [dayworksSheets, setDayworksSheets] = useState([]);
   const [supportingFiles, setSupportingFiles] = useState([]);
   const [workPhotos, setWorkPhotos] = useState([]);
@@ -51,6 +63,7 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
       const { data: report, error: loadError } = await supabase.from("reports").select("*").eq("id", editReportId).single();
       const { data: machineData } = await supabase.from("machine_hours").select("*").eq("report_id", editReportId);
       const { data: dayworkData } = await supabase.from("dayworks").select("*").eq("report_id", editReportId);
+      const { data: padData } = await supabase.from("pad_progress").select("*").eq("report_id", editReportId);
       const { data: fileData } = await supabase.from("report_files").select("*").eq("report_id", editReportId);
       if (cancelled) return;
       if (loadError || !report) {
@@ -80,6 +93,12 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
           activity: d.activity || "",
         }))
       );
+      const loadedPads = emptyPads();
+      (padData || []).forEach((p) => {
+        if (loadedPads[p.activity] && !loadedPads[p.activity].includes(p.pad_no)) loadedPads[p.activity].push(p.pad_no);
+      });
+      Object.values(loadedPads).forEach((list) => list.sort((a, b) => a - b));
+      setPads(loadedPads);
       setExistingFiles(
         (fileData || []).map((f) => ({
           ...f,
@@ -140,6 +159,15 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
   function setDayworkField(id, key, value) {
     setDayworks((prev) => prev.map((d) => (d.id === id ? { ...d, [key]: value } : d)));
     setDayworkErrors((e) => (e[id]?.[key] ? { ...e, [id]: { ...e[id], [key]: false } } : e));
+  }
+
+  // TSL pads: one list of pad numbers per stage, kept sorted.
+  function addPad(activity, padNo) {
+    setPads((p) => (p[activity].includes(padNo) ? p : { ...p, [activity]: [...p[activity], padNo].sort((a, b) => a - b) }));
+  }
+
+  function removePad(activity, padNo) {
+    setPads((p) => ({ ...p, [activity]: p[activity].filter((n) => n !== padNo) }));
   }
 
   function validate() {
@@ -257,6 +285,9 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
         // Daywork rows are replaced the same way, and for the same reason.
         const { error: clearDayworkError } = await supabase.from("dayworks").delete().eq("report_id", editReportId);
         if (clearDayworkError) throw clearDayworkError;
+        // 42P01 = table missing (TSL SQL block not run yet); don't strand an edit on it.
+        const { error: clearPadError } = await supabase.from("pad_progress").delete().eq("report_id", editReportId);
+        if (clearPadError && clearPadError.code !== "42P01") throw clearPadError;
       } else {
         const { data: inserted, error: insertError } = await supabase.from("reports").insert(payload).select().single();
         if (insertError) throw insertError;
@@ -290,6 +321,20 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
         if (dayworkError) throw dayworkError;
       }
 
+      const padRows = PAD_ACTIVITIES.flatMap((a) =>
+        (pads[a.key] || []).map((padNo) => ({
+          report_id: reportId,
+          log_date: reportDate,
+          activity: a.key,
+          pad_no: padNo,
+          created_by: userData?.user?.id || null,
+        }))
+      );
+      if (padRows.length > 0) {
+        const { error: padError } = await supabase.from("pad_progress").insert(padRows);
+        if (padError) throw padError;
+      }
+
       if (removedFileIds.length > 0) {
         const paths = existingFiles.filter((f) => removedFileIds.includes(f.id)).map((f) => f.storage_path);
         if (paths.length) await supabase.storage.from("site-reports").remove(paths);
@@ -319,6 +364,7 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
       setForm(emptyForm());
       setMachines([]);
       setDayworks([]);
+      setPads(emptyPads());
       setSupportingFiles([]);
       setWorkPhotos([]);
       setDayworksSheets([]);
@@ -483,7 +529,9 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
       <div className="subtabs subtabs-grid">
         {QUANTITY_GROUPS.map((g) => {
           const errorCount = g.fields.filter((f) => errors[f.key]).length;
-          const filledCount = g.fields.filter((f) => String(form[f.key] ?? "").trim() !== "").length;
+          const filledCount =
+            g.fields.filter((f) => String(form[f.key] ?? "").trim() !== "").length +
+            (g.pads ? PAD_ACTIVITIES.reduce((n, a) => n + (pads[a.key] || []).length, 0) : 0);
           return (
             <button
               key={g.key}
@@ -502,7 +550,14 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
         })}
       </div>
       {QUANTITY_GROUPS.filter((g) => g.key === quantityTab).map((g) => (
-        <div className="duct-grid" key={g.key}>
+        <div key={g.key}>
+          {g.pads && <PadProgressFields pads={pads} onAdd={addPad} onRemove={removePad} />}
+          {g.pads && (
+            <div className="label" style={{ margin: "4px 0 8px" }}>
+              Attenuation tank
+            </div>
+          )}
+          <div className="duct-grid">
           {g.fields.map((f) => (
             <div className="field" key={f.key}>
               <label className="label">
@@ -522,6 +577,7 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
               {errors[f.key] && <div className="hint error">{f.label} is required</div>}
             </div>
           ))}
+          </div>
         </div>
       ))}
 
@@ -788,6 +844,53 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
           Cancel
         </button>
       )}
+    </div>
+  );
+}
+
+// TSL Swords pad foundations: one "Add pad..." dropdown per stage, with the
+// pads picked today shown as chips (tap a chip to take it off again).
+function PadProgressFields({ pads, onAdd, onRemove }) {
+  return (
+    <div style={{ marginBottom: 6 }}>
+      <div className="label" style={{ marginBottom: 8 }}>
+        Pad foundations
+        <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> — pick each pad finished today, per stage</span>
+      </div>
+      {PAD_ACTIVITIES.map((a) => {
+        const chosen = pads[a.key] || [];
+        return (
+          <div className="pad-activity" key={a.key}>
+            <div className="label" style={{ fontWeight: 600, marginBottom: 4 }}>
+              {a.label}
+            </div>
+            <div className="pad-activity-row">
+              <select
+                className="input"
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) onAdd(a.key, Number(e.target.value));
+                }}
+              >
+                <option value="">Add pad...</option>
+                {PAD_NUMBERS.filter((n) => !chosen.includes(n)).map((n) => (
+                  <option key={n} value={n}>
+                    Pad {n}
+                  </option>
+                ))}
+              </select>
+              <div className="pad-chips">
+                {chosen.length === 0 && <span className="pad-none">None today</span>}
+                {chosen.map((n) => (
+                  <button type="button" key={n} className="pad-chip" onClick={() => onRemove(a.key, n)} title="Remove">
+                    {n} <X size={11} />
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

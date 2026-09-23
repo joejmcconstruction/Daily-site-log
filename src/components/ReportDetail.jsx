@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { ArrowLeft, Cloud, Sun, CloudDrizzle, CloudRain, Trash2, FileText, Loader2, Wrench, Pencil, ClipboardList } from "lucide-react";
 import { supabase } from "../supabaseClient";
-import { prettyDate, shortTime, fileSizeLabel, QUANTITY_GROUPS } from "../lib/helpers";
+import { prettyDate, shortTime, fileSizeLabel, QUANTITY_GROUPS, PAD_ACTIVITIES } from "../lib/helpers";
 import { syncExcelExport } from "../lib/exportExcel";
 import NewReportForm from "./NewReportForm";
 
@@ -12,6 +12,7 @@ export default function ReportDetail({ reportId, onBack, onDeleted, onUpdated })
   const [files, setFiles] = useState([]);
   const [machines, setMachines] = useState([]);
   const [dayworks, setDayworks] = useState([]);
+  const [padProgress, setPadProgress] = useState([]);
   const [loading, setLoading] = useState(true);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -26,10 +27,12 @@ export default function ReportDetail({ reportId, onBack, onDeleted, onUpdated })
       const { data: fileData } = await supabase.from("report_files").select("*").eq("report_id", reportId);
       const { data: machineData } = await supabase.from("machine_hours").select("*").eq("report_id", reportId);
       const { data: dayworkData } = await supabase.from("dayworks").select("*").eq("report_id", reportId);
+      const { data: padData } = await supabase.from("pad_progress").select("*").eq("report_id", reportId);
       if (cancelled) return;
       setReport(reportData);
       setMachines(machineData || []);
       setDayworks(dayworkData || []);
+      setPadProgress(padData || []);
       setFiles(
         (fileData || []).map((f) => ({
           ...f,
@@ -158,6 +161,27 @@ export default function ReportDetail({ reportId, onBack, onDeleted, onUpdated })
               </div>
             </div>
           ))}
+        </>
+      )}
+
+      {padProgress.length > 0 && (
+        <>
+          <div className="eyebrow">TSL Swords · Pads</div>
+          <div className="card">
+            {PAD_ACTIVITIES.map((a) => {
+              const nums = padProgress
+                .filter((p) => p.activity === a.key)
+                .map((p) => p.pad_no)
+                .sort((x, y) => x - y);
+              if (!nums.length) return null;
+              return (
+                <div key={a.key} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "4px 0" }}>
+                  <span style={{ fontSize: 12, color: "var(--text-muted)", minWidth: 120 }}>{a.label}</span>
+                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, fontWeight: 700 }}>{nums.join(", ")}</span>
+                </div>
+              );
+            })}
+          </div>
         </>
       )}
 

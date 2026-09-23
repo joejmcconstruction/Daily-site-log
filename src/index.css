@@ -1634,3 +1634,52 @@ select.input {
   padding-left: 14px;
   padding-right: 14px;
 }
+
+/* ---------- Report form: TSL pad progress ---------- */
+
+.pad-activity {
+  margin-bottom: 10px;
+}
+
+.pad-activity-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pad-activity-row .input {
+  width: 118px;
+  flex-shrink: 0;
+}
+
+.pad-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  flex: 1;
+  min-height: 24px;
+}
+
+.pad-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: "IBM Plex Mono", monospace;
+  cursor: pointer;
+}
+
+.pad-chip.static {
+  cursor: default;
+}
+
+.pad-none {
+  font-size: 12px;
+  color: var(--text-muted);
+}

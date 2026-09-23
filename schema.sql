@@ -791,3 +791,45 @@ alter table public.reports add column if not exists kerb_prep_excavation numeric
 alter table public.reports add column if not exists kerb_prep_build_up numeric;
 alter table public.reports add column if not exists road_formation_reduced_dig numeric;
 alter table public.reports add column if not exists road_formation_stone_build_up numeric;
+
+-- ============================================================
+-- TSL Swords: pad progress and attenuation tank quantities
+-- ============================================================
+-- The daily report gains a TSL Swords tab. Pad foundations are ticked off pad
+-- by pad per stage (excavate, blinding, rebar, shutter, concrete) as one
+-- pad_progress row per pad per stage per day; attenuation membrane and stone
+-- are ordinary report quantities. Rows are rewritten wholesale when a report
+-- is edited, same as machine_hours. Re-runnable.
+
+alter table public.reports add column if not exists att_membrane_m2 numeric;
+alter table public.reports add column if not exists att_stone_m3 numeric;
+
+create table if not exists public.pad_progress (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id),
+  report_id uuid not null references public.reports(id) on delete cascade,
+  log_date date not null,
+  activity text not null check (activity in ('excavate', 'blinding', 'rebar', 'shutter', 'concrete')),
+  pad_no integer not null check (pad_no between 1 and 50)
+);
+
+create index if not exists pad_progress_report_idx on public.pad_progress (report_id);
+create index if not exists pad_progress_pad_idx on public.pad_progress (pad_no, activity);
+
+alter table public.pad_progress enable row level security;
+
+drop policy if exists "authenticated users can read pad progress" on public.pad_progress;
+create policy "authenticated users can read pad progress"
+on public.pad_progress for select to authenticated
+using (true);
+
+drop policy if exists "users insert own pad progress" on public.pad_progress;
+create policy "users insert own pad progress"
+on public.pad_progress for insert to authenticated
+with check (created_by = auth.uid());
+
+drop policy if exists "users delete own pad progress, admins delete all" on public.pad_progress;
+create policy "users delete own pad progress, admins delete all"
+on public.pad_progress for delete to authenticated
+using (created_by = auth.uid() or public.is_admin());

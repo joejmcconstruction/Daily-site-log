@@ -69,9 +69,35 @@ export const QUANTITY_GROUPS = [
       { key: "road_base_prepped", label: "Road base prepped", unit: "m²", required: false },
     ],
   },
+  {
+    // TSL Swords (Horizon) — pad-by-pad progress is captured separately in
+    // pad_progress (see PAD_ACTIVITIES); these are the attenuation tank
+    // quantities that sit on the same tab.
+    key: "tsl",
+    label: "TSL Swords",
+    title: "TSL Swords",
+    pads: true,
+    fields: [
+      { key: "att_membrane_m2", label: "Attenuation membrane installed", unit: "m²", required: false },
+      { key: "att_stone_m3", label: "Attenuation stone installed", unit: "m³", required: false },
+    ],
+  },
 ];
 
 export const QUANTITY_FIELDS = QUANTITY_GROUPS.flatMap((g) => g.fields);
+
+// Pad foundations on TSL Swords: each stage is ticked off pad by pad on the
+// daily report, one pad_progress row per pad per stage per day.
+export const PAD_COUNT = 50;
+export const PAD_NUMBERS = Array.from({ length: PAD_COUNT }, (_, i) => i + 1);
+export const PAD_ACTIVITIES = [
+  { key: "excavate", label: "Excavate pad", done: "Excavated" },
+  { key: "blinding", label: "Blinding", done: "Blinded" },
+  { key: "rebar", label: "Rebar complete", done: "Rebar" },
+  { key: "shutter", label: "Shutter complete", done: "Shuttered" },
+  { key: "concrete", label: "Concrete poured", done: "Poured" },
+];
+export const emptyPads = () => Object.fromEntries(PAD_ACTIVITIES.map((a) => [a.key, []]));
 
 export const MACHINE_OPTIONS = [
   "13T Hitachi",

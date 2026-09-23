@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs/dist/exceljs.min.js";
 import { supabase } from "../supabaseClient";
-import { PROJECT_OPTIONS, MACHINE_OPTIONS, QUANTITY_FIELDS } from "./helpers";
+import { PROJECT_OPTIONS, MACHINE_OPTIONS, QUANTITY_FIELDS, PAD_ACTIVITIES, PAD_NUMBERS } from "./helpers";
 import { renderPieChart, renderGroupedBarChart, renderStackedBarChart } from "./dashboardCharts";
 import { buildDeliveriesSheets } from "./deliveriesExcel";
 import { fetchDeliveries } from "./deliveries";
@@ -546,10 +546,70 @@ function buildDashboardSheet(wb, reports, machineHours, dayworks, reportById) {
   return ws;
 }
 
+// TSL Swords pad tracker: one row per pad, one column per stage, the cell is
+// the date that stage was logged (latest if logged twice). Counts along the
+// top are live so the sheet still reads right if a date is corrected by hand.
+function buildPadTrackerSheet(wb, padProgress, reportById) {
+  const ws = wb.addWorksheet("Pad Tracker", { views: [{ state: "frozen", ySplit: 4 }] });
+  const stageCols = PAD_ACTIVITIES.length;
+  const header = ["Pad", ...PAD_ACTIVITIES.map((a) => a.label), "Stage reached"];
+  ws.getColumn(1).width = 8;
+  PAD_ACTIVITIES.forEach((_, i) => {
+    ws.getColumn(2 + i).width = 16;
+  });
+  ws.getColumn(2 + stageCols).width = 16;
+
+  ws.getCell("A1").value = "TSL Swords — pad foundations";
+  ws.getCell("A1").font = { bold: true, size: 14 };
+  ws.getCell("A2").value = "Pads done";
+  ws.getCell("A2").font = { bold: true };
+  const firstDataRow = 5;
+  const lastDataRow = firstDataRow + PAD_NUMBERS.length - 1;
+  PAD_ACTIVITIES.forEach((_, i) => {
+    const col = String.fromCharCode(66 + i);
+    const cell = ws.getCell(`${col}2`);
+    cell.value = { formula: `COUNTA(${col}${firstDataRow}:${col}${lastDataRow})` };
+    cell.font = { bold: true };
+  });
+
+  ws.getRow(4).values = header;
+  ws.getRow(4).font = { bold: true };
+  ws.getRow(4).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEF1F7" } };
+
+  // Latest date per pad and stage.
+  const latest = {};
+  padProgress.forEach((p) => {
+    const key = `${p.pad_no}|${p.activity}`;
+    if (!latest[key] || p.log_date > latest[key]) latest[key] = p.log_date;
+  });
+
+  PAD_NUMBERS.forEach((padNo, i) => {
+    const r = firstDataRow + i;
+    ws.getCell(`A${r}`).value = padNo;
+    let reached = "";
+    PAD_ACTIVITIES.forEach((a, j) => {
+      const date = latest[`${padNo}|${a.key}`];
+      const cell = ws.getCell(r, 2 + j);
+      if (date) {
+        const [y, m, d] = date.split("-").map(Number);
+        cell.value = new Date(Date.UTC(y, m - 1, d));
+        cell.numFmt = "dd/mm/yyyy";
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFC6EFCE" } };
+        reached = a.done;
+      }
+    });
+    ws.getCell(r, 2 + stageCols).value = reached || "Not started";
+    if (reached === "Poured") ws.getCell(r, 2 + stageCols).font = { bold: true, color: { argb: "FF1F9D63" } };
+  });
+  ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: lastDataRow, column: 2 + stageCols } };
+  return ws;
+}
+
 export function buildWorkbook(data) {
   const reports = data.reports;
   const machineHours = data.machineHours;
   const dayworks = data.dayworks || [];
+  const padProgress = data.padProgress || [];
   const wb = new ExcelJS.Workbook();
   const reportById = {};
   reports.forEach((r) => {
@@ -562,6 +622,7 @@ export function buildWorkbook(data) {
   buildDayworksSheet(wb, dayworks, reportById);
   const ratesResult = buildRatesSheet(wb);
   buildCostReportSheet(wb, reports, machineHours, dayworks, reportById, ratesResult);
+  buildPadTrackerSheet(wb, padProgress, reportById);
   buildDeliveriesSheets(wb, data.deliveries || []);
   wb.calcProperties.fullCalcOnLoad = true;
 
@@ -592,20 +653,24 @@ export async function syncExcelExport() {
 
   // fetchDeliveries() merges the admin-only delivery_costs rows in, which is
   // what puts prices on the Deliveries and Costs by Project sheets.
-  const [reportsRes, machineRes, dayworksRes, deliveries] = await Promise.all([
+  const [reportsRes, machineRes, dayworksRes, padsRes, deliveries] = await Promise.all([
     supabase.from("reports").select("*"),
     supabase.from("machine_hours").select("*"),
     supabase.from("dayworks").select("*"),
+    supabase.from("pad_progress").select("*"),
     fetchDeliveries(),
   ]);
   if (reportsRes.error) throw reportsRes.error;
   if (machineRes.error) throw machineRes.error;
   if (dayworksRes.error) throw dayworksRes.error;
+  // Missing until the TSL SQL block is run; the workbook still builds.
+  if (padsRes.error) console.warn("pad_progress not readable:", padsRes.error.message);
 
   const wb = buildWorkbook({
     reports: reportsRes.data || [],
     machineHours: machineRes.data || [],
     dayworks: dayworksRes.data || [],
+    padProgress: padsRes.data || [],
     deliveries,
   });
   const buffer = await wb.xlsx.writeBuffer();
