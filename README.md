@@ -145,6 +145,34 @@ How it works:
 
 ---
 
+## 10. Weekly staff-hours email
+
+Hours logged on **Staff → Hours** are compiled Thursday to Wednesday and emailed
+every **Wednesday at 8pm** to Kate (`kate@jmcconstruction.com`, copy to Joe): a
+per-person-per-day table, every entry with in/out, break, project and notes, and
+the notes grouped by day. At **3pm on Wednesday** a check runs and emails Joe only
+if a working day or a person has no hours yet. The Hours tab also has **Preview**
+and **Email to Kate** buttons for this week or last week.
+
+The emails go out over Gmail, so no new service to sign up for. Setup, once, in
+Vercel → Settings → Environment Variables (then Redeploy):
+
+1. `SUPABASE_SERVICE_ROLE_KEY` — Supabase → Settings → API → **service_role** key.
+   Keep it secret; it bypasses row security, which is why the emails can read
+   everyone's hours without a login.
+2. `SMTP_USER` — the Gmail address to send from. `SMTP_PASS` — an **App Password**
+   for that account: Google Account → Security → 2-Step Verification (must be on)
+   → App passwords → create one named "JMC site app" and paste the 16 characters.
+3. `CRON_SECRET` — any long random string. Vercel sends it with the scheduled
+   requests so nobody else can trigger the emails.
+
+Optional: `HOURS_REPORT_TO`, `HOURS_REPORT_CC`, `HOURS_REMINDER_TO`, `MAIL_FROM`.
+The schedules live in `vercel.json` in UTC (`0 19 * * 3` = 8pm Irish summer time,
+7pm in winter; `0 14 * * 3` likewise for the 3pm check). Vercel's free plan may
+run them up to an hour late.
+
+---
+
 ## Notes
 
 - **Photos** are compressed in the browser before upload to keep storage and mobile

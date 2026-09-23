@@ -18,6 +18,7 @@ import {
   Award,
   X,
   Clock,
+  Mail,
 } from "lucide-react";
 import { supabase } from "../../supabaseClient";
 import { uid, dateKey, prettyDate, PROJECT_OPTIONS } from "../../lib/helpers";
@@ -1177,7 +1178,9 @@ function HoursSection({ employees }) {
   const [rows, setRows] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [period, setPeriod] = useState("week");
-  const [form, setForm] = useState(() => ({ work_date: dateKey(new Date()), employee_ids: [], ...rememberedHourDefaults() }));
+  const [form, setForm] = useState(() => ({ work_date: dateKey(new Date()), employee_ids: [], notes: "", ...rememberedHourDefaults() }));
+  const [emailWeek, setEmailWeek] = useState("this");
+  const [emailing, setEmailing] = useState(false);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState(null);
@@ -1248,6 +1251,7 @@ function HoursSection({ employees }) {
         clock_out: form.clock_out,
         break_minutes: Number(form.break_minutes) || 0,
         project_name: form.project_name || null,
+        notes: form.notes.trim() || null,
         created_by: userData?.user?.id || null,
       }));
       const { error } = await supabase.from("staff_hours").insert(rowsToInsert);
@@ -1263,8 +1267,8 @@ function HoursSection({ employees }) {
       const count = form.employee_ids.length;
       const who = count === 1 ? employeeById[form.employee_ids[0]]?.full_name || "1 person" : `${count} people`;
       flash("success", `${preview}h saved for ${who}.`);
-      // Keep date and times; clear the names for the next batch.
-      setForm((f) => ({ ...f, employee_ids: [] }));
+      // Keep date and times; clear the names and note for the next batch.
+      setForm((f) => ({ ...f, employee_ids: [], notes: "" }));
       load();
       syncExcelExport().catch((err) => console.error("Excel export sync failed:", err));
     } catch (err) {
@@ -1272,6 +1276,58 @@ function HoursSection({ employees }) {
       flash("error", err.message || "Couldn't save those hours.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Anchor date for the week to email: today for this Thu-Wed week, or a
+  // week back for the last one. The server works out the Thu-Wed span.
+  function emailAnchor() {
+    const d = new Date();
+    if (emailWeek === "last") d.setDate(d.getDate() - 7);
+    return dateKey(d);
+  }
+
+  async function callHoursApi(path, payload) {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData?.session?.access_token;
+    if (!token) throw new Error("Not signed in.");
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload),
+    });
+    return res;
+  }
+
+  async function handleEmailWeek() {
+    setEmailing(true);
+    try {
+      const res = await callHoursApi("/api/hours-weekly", { week: emailAnchor() });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || `Email failed (${res.status}).`);
+      flash("success", `Sent to ${json.to}: ${json.people} ${json.people === 1 ? "person" : "people"}, ${json.hours}h.`);
+    } catch (err) {
+      console.error(err);
+      flash("error", err.message || "Couldn't send the email.");
+    } finally {
+      setEmailing(false);
+    }
+  }
+
+  async function handlePreviewWeek() {
+    try {
+      const res = await callHoursApi("/api/hours-weekly", { week: emailAnchor(), preview: "1" });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error || `Preview failed (${res.status}).`);
+      }
+      const html = await res.text();
+      const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+      window.open(url, "_blank", "noreferrer");
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) {
+      console.error(err);
+      flash("error", err.message || "Couldn't build the preview.");
     }
   }
 
@@ -1420,10 +1476,37 @@ function HoursSection({ employees }) {
             ))}
           </select>
         </div>
+        <div className="field">
+          <label className="label">Notes for the day</label>
+          <textarea
+            className="input"
+            rows={2}
+            placeholder="e.g. Left early for delivery, rained off at 2"
+            value={form.notes}
+            onChange={(e) => setField("notes", e.target.value)}
+          />
+        </div>
         <button className="btn-primary" onClick={handleAdd} disabled={saving}>
           {saving ? <Loader2 size={17} className="spin" /> : <Plus size={17} />}
           {saving ? "Saving..." : "Add hours"}
         </button>
+      </div>
+
+      <div className="card" style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <Mail size={16} color="var(--accent)" />
+        <select className="input" style={{ width: "auto", flex: 1, minWidth: 120 }} value={emailWeek} onChange={(e) => setEmailWeek(e.target.value)}>
+          <option value="this">This week (Thu–Wed)</option>
+          <option value="last">Last week</option>
+        </select>
+        <button type="button" className="btn-small" onClick={handlePreviewWeek} disabled={emailing}>
+          Preview
+        </button>
+        <button type="button" className="btn-small" onClick={handleEmailWeek} disabled={emailing}>
+          {emailing ? <Loader2 size={14} className="spin" /> : <Mail size={14} />} Email to Kate
+        </button>
+        <div style={{ width: "100%", fontSize: 11.5, color: "var(--text-muted)" }}>
+          Goes automatically every Wednesday at 8pm. A reminder comes to you at 3pm if days or people are missing.
+        </div>
       </div>
 
       <div className="pill-row" style={{ marginTop: 14 }}>
@@ -1490,6 +1573,7 @@ function HoursSection({ employees }) {
                       {r.break_minutes ? ` · ${r.break_minutes} min break` : ""}
                       {r.project_name ? ` · ${r.project_name}` : ""}
                     </div>
+                    {r.notes && <div className="cert-row-sub" style={{ fontStyle: "italic" }}>{r.notes}</div>}
                   </div>
                   <span className="delivery-row-qty" style={{ fontSize: 13.5 }}>
                     {entryHours(r)}h
