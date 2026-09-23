@@ -1689,3 +1689,39 @@ select.input {
   grid-template-columns: 1fr 1fr 88px;
   gap: 10px;
 }
+
+/* Staff hours: tap names to pick several at once */
+
+.pick-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 2px;
+  border-radius: 10px;
+}
+
+.pick-grid.error {
+  outline: 1.5px solid var(--danger);
+}
+
+.pick-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.pick-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}

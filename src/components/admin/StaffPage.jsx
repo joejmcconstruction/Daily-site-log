@@ -1177,7 +1177,7 @@ function HoursSection({ employees }) {
   const [rows, setRows] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [period, setPeriod] = useState("week");
-  const [form, setForm] = useState(() => ({ work_date: dateKey(new Date()), employee_id: "", ...rememberedHourDefaults() }));
+  const [form, setForm] = useState(() => ({ work_date: dateKey(new Date()), employee_ids: [], ...rememberedHourDefaults() }));
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState(null);
@@ -1216,25 +1216,41 @@ function HoursSection({ employees }) {
 
   const preview = entryHours(form);
 
+  function togglePerson(id) {
+    setForm((f) => ({
+      ...f,
+      employee_ids: f.employee_ids.includes(id) ? f.employee_ids.filter((x) => x !== id) : [...f.employee_ids, id],
+    }));
+    if (errors.employee_ids) setErrors((e) => ({ ...e, employee_ids: false }));
+  }
+
+  function pickAll(on) {
+    setForm((f) => ({ ...f, employee_ids: on ? employees.map((emp) => emp.id) : [] }));
+    if (errors.employee_ids) setErrors((e) => ({ ...e, employee_ids: false }));
+  }
+
+  // One row per person picked, all with the same times — the usual case is
+  // the whole crew on the same hours.
   async function handleAdd() {
     const e = {};
     if (!form.work_date) e.work_date = true;
-    if (!form.employee_id) e.employee_id = true;
+    if (form.employee_ids.length === 0) e.employee_ids = true;
     if (form.clock_in === form.clock_out) e.clock_out = true;
     setErrors(e);
     if (Object.keys(e).length) return;
     setSaving(true);
     try {
       const { data: userData } = await supabase.auth.getUser();
-      const { error } = await supabase.from("staff_hours").insert({
-        employee_id: form.employee_id,
+      const rowsToInsert = form.employee_ids.map((employee_id) => ({
+        employee_id,
         work_date: form.work_date,
         clock_in: form.clock_in,
         clock_out: form.clock_out,
         break_minutes: Number(form.break_minutes) || 0,
         project_name: form.project_name || null,
         created_by: userData?.user?.id || null,
-      });
+      }));
+      const { error } = await supabase.from("staff_hours").insert(rowsToInsert);
       if (error) throw error;
       try {
         window.localStorage.setItem(
@@ -1244,10 +1260,11 @@ function HoursSection({ employees }) {
       } catch {
         // Storage blocked: defaults just won't persist.
       }
-      const name = employeeById[form.employee_id]?.full_name || "them";
-      flash("success", `${preview}h saved for ${name}. Times kept for the next person.`);
-      // Keep date and times so the next person is two taps away.
-      setForm((f) => ({ ...f, employee_id: "" }));
+      const count = form.employee_ids.length;
+      const who = count === 1 ? employeeById[form.employee_ids[0]]?.full_name || "1 person" : `${count} people`;
+      flash("success", `${preview}h saved for ${who}.`);
+      // Keep date and times; clear the names for the next batch.
+      setForm((f) => ({ ...f, employee_ids: [] }));
       load();
       syncExcelExport().catch((err) => console.error("Excel export sync failed:", err));
     } catch (err) {
@@ -1327,27 +1344,37 @@ function HoursSection({ employees }) {
           <span>Add hours</span>
           <span style={{ marginLeft: "auto", fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: "var(--accent-2)" }}>{preview}h</span>
         </div>
-        <div className="two-col">
-          <div className="field">
-            <label className="label">
-              Date <span className="req">*</span>
-            </label>
-            <input className={`input ${errors.work_date ? "error" : ""}`} type="date" value={form.work_date} onChange={(e) => setField("work_date", e.target.value)} />
+        <div className="field">
+          <label className="label">
+            Date <span className="req">*</span>
+          </label>
+          <input className={`input ${errors.work_date ? "error" : ""}`} type="date" value={form.work_date} onChange={(e) => setField("work_date", e.target.value)} />
+        </div>
+        <div className="field">
+          <div className="label" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span>
+              Who <span className="req">*</span>
+              {form.employee_ids.length > 0 && <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> · {form.employee_ids.length} picked</span>}
+            </span>
+            <button type="button" className="btn-link" style={{ marginLeft: "auto", marginBottom: 0, padding: 0 }} onClick={() => pickAll(true)}>
+              Everyone
+            </button>
+            <button type="button" className="btn-link" style={{ marginBottom: 0, padding: 0 }} onClick={() => pickAll(false)}>
+              Clear
+            </button>
           </div>
-          <div className="field">
-            <label className="label">
-              Name <span className="req">*</span>
-            </label>
-            <select className={`input ${errors.employee_id ? "error" : ""}`} value={form.employee_id} onChange={(e) => setField("employee_id", e.target.value)}>
-              <option value="">Select...</option>
-              {employees.map((emp) => (
-                <option key={emp.id} value={emp.id}>
+          <div className={`pick-grid ${errors.employee_ids ? "error" : ""}`}>
+            {employees.map((emp) => {
+              const on = form.employee_ids.includes(emp.id);
+              return (
+                <button key={emp.id} type="button" className={`pick-btn ${on ? "active" : ""}`} onClick={() => togglePerson(emp.id)}>
+                  {on && <Check size={13} />}
                   {emp.full_name}
-                </option>
-              ))}
-            </select>
-            {errors.employee_id && <div className="hint error">Pick a name</div>}
+                </button>
+              );
+            })}
           </div>
+          {errors.employee_ids && <div className="hint error">Pick at least one person</div>}
         </div>
         <div className="hours-times">
           <div className="field">
