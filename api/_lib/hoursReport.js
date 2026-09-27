@@ -173,9 +173,24 @@ function sectionTitle(text, sub) {
   }</h3>`;
 }
 
-export function buildWeeklyEmail(week, { employees, entries }) {
+// A small copy of the logo is served by the app itself (public/logo-email.png,
+// 320px wide). For the real email it's attached inline (cid) so it shows in
+// every mail client; the preview just links to it.
+export const LOGO_URL = `${APP_URL}/logo-email.png`;
+
+export async function fetchLogo() {
+  try {
+    const res = await fetch(LOGO_URL);
+    if (!res.ok) return null;
+    return Buffer.from(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+export function buildWeeklyEmail(week, { employees, entries }, { logoSrc = LOGO_URL } = {}) {
   const range = `${shortDay(week.start)} – ${longDay(week.end)}`;
-  const title = `Staff hours · ${range}`;
+  const title = `JMC Wage List Week (${range})`;
   const people = Array.from(new Set(entries.map((e) => e.name))).sort((a, b) => a.localeCompare(b));
 
   // Summary: person x day.
@@ -239,8 +254,13 @@ ${noted
   const empty = entries.length === 0;
   const html = `<div style="background:#eef1f7;padding:20px 12px;${FONT}">
 <div style="max-width:760px;margin:0 auto;background:#ffffff;border-radius:12px;padding:22px 24px 26px;border:1px solid #d9dee8">
-<div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#b8862c;margin-bottom:4px">JMC Construction · Staff hours</div>
-<h2 style="margin:0 0 14px;font-size:20px;color:#131f3d">${esc(range)}</h2>
+<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin-bottom:16px;width:100%"><tr>
+<td style="vertical-align:middle;padding:0 16px 0 0;width:120px"><img src="${esc(logoSrc)}" alt="JMC Construction" width="120" style="display:block;width:120px;height:auto;border:0"></td>
+<td style="vertical-align:middle">
+<div style="${FONT}font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#b8862c;margin-bottom:2px">JMC Construction</div>
+<h2 style="${FONT}margin:0;font-size:21px;color:#131f3d;line-height:1.2">JMC Wage List</h2>
+<div style="${FONT}font-size:14px;color:#5b6478;margin-top:2px">Week ${esc(range)}</div>
+</td></tr></table>
 ${
   empty
     ? `<p style="font-size:14px;margin:0"><b>No hours were logged this week.</b></p>`
@@ -325,10 +345,10 @@ export async function verifySmtp() {
   await transporter.verify();
 }
 
-export async function sendMail({ to, cc, subject, html, text }) {
+export async function sendMail({ to, cc, subject, html, text, attachments }) {
   const { user, transporter } = transport();
-  const from = process.env.MAIL_FROM || `JMC Site App <${user}>`;
-  const info = await transporter.sendMail({ from, to, cc: cc || undefined, subject, html, text });
+  const from = process.env.MAIL_FROM || `JMC Construction <${user}>`;
+  const info = await transporter.sendMail({ from, to, cc: cc || undefined, subject, html, text, attachments: attachments || undefined });
   return info.messageId;
 }
 

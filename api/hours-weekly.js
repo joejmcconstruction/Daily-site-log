@@ -14,6 +14,8 @@ import {
   sendMail,
   verifySmtp,
   serviceKeyRole,
+  fetchLogo,
+  LOGO_URL,
   readBody,
   REPORT_TO,
   REPORT_CC,
@@ -59,15 +61,21 @@ export default async function handler(req, res) {
     const anchor = body.week || req.query?.week;
     const week = weekRange(isValidIso(anchor) ? anchor : todayInDublin());
     const data = await loadWeek(week);
-    const mail = buildWeeklyEmail(week, data);
 
     const preview = String(body.preview || req.query?.preview || "") === "1";
     if (preview && auth.via === "admin") {
+      const mail = buildWeeklyEmail(week, data);
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       return res.status(200).send(mail.html);
     }
 
-    const messageId = await sendMail({ to: REPORT_TO, cc: REPORT_CC, subject: mail.subject, html: mail.html, text: mail.text });
+    // Logo goes inline so it shows without "load remote images"; falls back
+    // to the hosted file if the fetch fails.
+    const logo = await fetchLogo();
+    const mail = buildWeeklyEmail(week, data, { logoSrc: logo ? "cid:jmclogo" : LOGO_URL });
+    const attachments = logo ? [{ filename: "logo.png", content: logo, cid: "jmclogo", contentType: "image/png" }] : undefined;
+
+    const messageId = await sendMail({ to: REPORT_TO, cc: REPORT_CC, subject: mail.subject, html: mail.html, text: mail.text, attachments });
     console.log("hours-weekly:", JSON.stringify({ via: auth.via, week, to: REPORT_TO, people: mail.people, entries: mail.entries, hours: mail.hours, messageId }));
     return res.status(200).json({ sent: true, to: REPORT_TO, cc: REPORT_CC, week: { start: week.start, end: week.end }, people: mail.people, entries: mail.entries, hours: mail.hours });
   } catch (err) {
