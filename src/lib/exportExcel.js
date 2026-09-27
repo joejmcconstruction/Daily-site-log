@@ -620,8 +620,8 @@ function staffEntryHours(row) {
 
 function buildStaffHoursSheet(wb, staffHours, employees) {
   const ws = wb.addWorksheet("Staff Hours", { views: [{ state: "frozen", ySplit: 1 }] });
-  const header = ["Date", "Name", "Clock in", "Clock out", "Break (min)", "Hours", "Project", "Notes"];
-  const widths = [12, 22, 10, 10, 11, 8, 18, 30];
+  const header = ["Date", "Name", "Type", "Clock in", "Clock out", "Break (min)", "Hours", "Days", "Project", "Notes"];
+  const widths = [12, 22, 10, 10, 10, 11, 8, 6, 18, 30];
   ws.columns = header.map((h, i) => ({ header: h, width: widths[i] }));
   const nameById = {};
   (employees || []).forEach((e) => {
@@ -630,30 +630,41 @@ function buildStaffHoursSheet(wb, staffHours, employees) {
   const rows = (staffHours || [])
     .slice()
     .sort((a, b) => (a.work_date === b.work_date ? (a.clock_in < b.clock_in ? -1 : 1) : a.work_date < b.work_date ? 1 : -1))
-    .map((r) => [
-      r.work_date,
-      nameById[r.employee_id] || "Unknown",
-      String(r.clock_in || "").slice(0, 5),
-      String(r.clock_out || "").slice(0, 5),
-      Number(r.break_minutes) || 0,
-      staffEntryHours(r),
-      r.project_name || "",
-      r.notes || "",
-    ]);
+    .map((r) => {
+      const fullDay = r.entry_type === "full_day";
+      return [
+        r.work_date,
+        nameById[r.employee_id] || "Unknown",
+        fullDay ? "Full day" : "Hours",
+        String(r.clock_in || "").slice(0, 5),
+        String(r.clock_out || "").slice(0, 5),
+        Number(r.break_minutes) || 0,
+        staffEntryHours(r),
+        fullDay ? 1 : 0,
+        r.project_name || "",
+        r.notes || "",
+      ];
+    });
   ws.addRows(rows);
   applyAutoFilterAndHeaderStyle(ws, header.length, rows.length + 1);
   if (rows.length === 0) return ws;
 
+  // Per-person totals: full days counted in H, clocked hours (non-day
+  // entries) summed in G, both as live SUMIFS.
   const lastDataRow = rows.length + 1;
   let r = lastDataRow + 3;
-  ws.getCell(`A${r}`).value = "Total hours by person";
-  ws.getCell(`A${r}`).font = { bold: true };
+  ws.getCell(`B${r}`).value = "Total by person";
+  ws.getCell(`G${r}`).value = "Clocked hours";
+  ws.getCell(`H${r}`).value = "Full days";
+  ws.getRow(r).font = { bold: true };
   r += 1;
   const names = Array.from(new Set(rows.map((x) => x[1]))).sort((a, b) => a.localeCompare(b));
   names.forEach((name) => {
     ws.getCell(`B${r}`).value = name;
-    ws.getCell(`F${r}`).value = { formula: `SUMIFS($F$2:$F$${lastDataRow},$B$2:$B$${lastDataRow},B${r})` };
-    ws.getCell(`F${r}`).font = { bold: true };
+    ws.getCell(`G${r}`).value = { formula: `SUMIFS($G$2:$G$${lastDataRow},$B$2:$B$${lastDataRow},B${r},$C$2:$C$${lastDataRow},"Hours")` };
+    ws.getCell(`H${r}`).value = { formula: `SUMIFS($H$2:$H$${lastDataRow},$B$2:$B$${lastDataRow},B${r})` };
+    ws.getCell(`G${r}`).font = { bold: true };
+    ws.getCell(`H${r}`).font = { bold: true };
     r += 1;
   });
   return ws;

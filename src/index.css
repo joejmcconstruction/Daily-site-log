@@ -1783,3 +1783,41 @@ select.input {
   width: 100%;
   background: #fff;
 }
+
+/* Staff hours: pick several days at once */
+
+.day-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 5px;
+  padding: 2px;
+  border-radius: 10px;
+}
+
+.day-grid.error {
+  outline: 1.5px solid var(--danger);
+}
+
+.day-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 8px 2px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text);
+  cursor: pointer;
+  font-family: "IBM Plex Mono", monospace;
+  white-space: nowrap;
+}
+
+.day-btn.weekend {
+  color: var(--text-muted);
+  background: var(--surface);
+}
+
+.day-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}

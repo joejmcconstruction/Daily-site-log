@@ -193,29 +193,49 @@ export function buildWeeklyEmail(week, { employees, entries }, { logoSrc = LOGO_
   const title = `JMC Wage List Week (${range})`;
   const people = Array.from(new Set(entries.map((e) => e.name))).sort((a, b) => a.localeCompare(b));
 
-  // Summary: person x day.
+  // Summary: person x day. Most of the crew are paid by the day, so a cell
+  // is "Day" for a full-day entry and hours for clocked entries; totals are
+  // "N days" plus any hourly time.
+  const tally = () => ({ days: 0, hours: 0 });
   const cell = {};
+  const personTotal = {};
+  const dayTotal = Object.fromEntries(week.days.map((d) => [d, tally()]));
+  const grand = tally();
   entries.forEach((e) => {
     const k = `${e.name}|${e.work_date}`;
-    cell[k] = (cell[k] || 0) + e.hours;
+    cell[k] = cell[k] || tally();
+    personTotal[e.name] = personTotal[e.name] || tally();
+    const buckets = [cell[k], personTotal[e.name], dayTotal[e.work_date], grand].filter(Boolean);
+    if (e.entry_type === "full_day") buckets.forEach((b) => (b.days += 1));
+    else buckets.forEach((b) => (b.hours += e.hours));
   });
-  const dayTotals = week.days.map((d) => entries.filter((e) => e.work_date === d).reduce((s, e) => s + e.hours, 0));
-  const grand = dayTotals.reduce((s, v) => s + v, 0);
-  const daysWorked = week.days.filter((d, i) => dayTotals[i] > 0).length;
+  const daysWorked = week.days.filter((d) => dayTotal[d].days > 0 || dayTotal[d].hours > 0).length;
+
+  const describe = (t, short = false) => {
+    if (!t || (t.days === 0 && t.hours === 0)) return "";
+    const parts = [];
+    if (t.days) parts.push(short && t.days === 1 ? "Day" : `${t.days} ${t.days === 1 ? "day" : "days"}`);
+    if (t.hours) parts.push(`${fmtHours(t.hours)}h`);
+    return parts.join(" + ");
+  };
+  const dash = `<span style="color:#c5cad6">–</span>`;
 
   const summaryRows = people
     .map((name, i) => {
       const cells = week.days
-        .map((d) => `<td style="${NUM}${isWeekend(d) ? `background:${WEEKEND_BG};` : ""}">${fmtHours(cell[`${name}|${d}`]) || `<span style="color:#c5cad6">–</span>`}</td>`)
+        .map((d) => {
+          const t = cell[`${name}|${d}`];
+          const isDay = t && t.days > 0 && t.hours === 0;
+          return `<td style="${NUM}${isWeekend(d) ? `background:${WEEKEND_BG};` : ""}${isDay ? "color:#1f9d63;font-weight:700;" : ""}">${describe(t, true) || dash}</td>`;
+        })
         .join("");
-      const total = week.days.reduce((s, d) => s + (cell[`${name}|${d}`] || 0), 0);
       const bg = i % 2 ? "#fafbfd" : "#ffffff";
-      return `<tr style="background:${bg}"><td style="${TD}font-weight:700;white-space:nowrap">${esc(name)}</td>${cells}<td style="${NUM}font-weight:700;background:#eef1f7">${fmtHours(total)}</td></tr>`;
+      return `<tr style="background:${bg}"><td style="${TD}font-weight:700;white-space:nowrap">${esc(name)}</td>${cells}<td style="${NUM}font-weight:700;background:#eef1f7">${describe(personTotal[name])}</td></tr>`;
     })
     .join("");
-  const totalsRow = `<tr style="background:#e6eaf3"><td style="${TD}font-weight:700;border-bottom:none">Total</td>${dayTotals
-    .map((v) => `<td style="${NUM}font-weight:700;border-bottom:none">${fmtHours(v) || "–"}</td>`)
-    .join("")}<td style="${NUM}font-weight:700;border-bottom:none;background:#16264d;color:#fff">${fmtHours(grand)}</td></tr>`;
+  const totalsRow = `<tr style="background:#e6eaf3"><td style="${TD}font-weight:700;border-bottom:none">Total</td>${week.days
+    .map((d) => `<td style="${NUM}font-weight:700;border-bottom:none">${describe(dayTotal[d]) || "–"}</td>`)
+    .join("")}<td style="${NUM}font-weight:700;border-bottom:none;background:#16264d;color:#fff">${describe(grand)}</td></tr>`;
 
   const summaryTable = `<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;border:1px solid #d9dee8;border-radius:8px;overflow:hidden">
 <tr><th style="${TH}">Name</th>${week.days.map((d) => `<th style="${TH}text-align:right">${dayHeader(d)}</th>`).join("")}<th style="${TH}text-align:right">Total</th></tr>
@@ -242,7 +262,9 @@ ${noted
     .sort((a, b) => (a.work_date === b.work_date ? a.name.localeCompare(b.name) : a.work_date < b.work_date ? -1 : 1))
     .map(
       (e, i) =>
-        `<tr style="background:${i % 2 ? "#fafbfd" : "#ffffff"}"><td style="${TD}font-size:12px;white-space:nowrap">${esc(shortDay(e.work_date))}</td><td style="${TD}font-size:12px;white-space:nowrap">${esc(e.name)}</td><td style="${TD}font-size:12px;white-space:nowrap">${hhmm(e.clock_in)} – ${hhmm(e.clock_out)}</td><td style="${NUM}font-size:12px">${e.break_minutes || 0}</td><td style="${NUM}font-size:12px;font-weight:700">${fmtHours(e.hours)}</td><td style="${TD}font-size:12px">${esc(e.project_name || "")}</td></tr>`
+        `<tr style="background:${i % 2 ? "#fafbfd" : "#ffffff"}"><td style="${TD}font-size:12px;white-space:nowrap">${esc(shortDay(e.work_date))}</td><td style="${TD}font-size:12px;white-space:nowrap">${esc(e.name)}</td><td style="${TD}font-size:12px;white-space:nowrap">${
+          e.entry_type === "full_day" ? `<span style="color:#1f9d63;font-weight:700">Full day</span>` : `${hhmm(e.clock_in)} – ${hhmm(e.clock_out)}`
+        }</td><td style="${NUM}font-size:12px">${e.entry_type === "full_day" ? "" : e.break_minutes || 0}</td><td style="${NUM}font-size:12px;font-weight:700">${e.entry_type === "full_day" ? "1 day" : `${fmtHours(e.hours)}h`}</td><td style="${TD}font-size:12px">${esc(e.project_name || "")}</td></tr>`
     )
     .join("");
   const detailTable = `<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;border:1px solid #e2e6ee">
@@ -264,8 +286,8 @@ ${noted
 ${
   empty
     ? `<p style="font-size:14px;margin:0"><b>No hours were logged this week.</b></p>`
-    : `<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin-bottom:6px"><tr>${stat("Total hours", fmtHours(grand) || "0")}${stat(people.length === 1 ? "Person" : "People", people.length)}${stat(daysWorked === 1 ? "Day worked" : "Days worked", daysWorked)}</tr></table>
-<p style="margin:0 0 4px;color:#5b6478;font-size:12px">Hours are net of breaks. Thursday to Wednesday.</p>
+    : `<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin-bottom:6px"><tr>${grand.days ? stat("Full days", grand.days) : ""}${grand.hours ? stat("Hours", fmtHours(grand.hours)) : ""}${stat(people.length === 1 ? "Person" : "People", people.length)}${stat(daysWorked === 1 ? "Day worked" : "Days worked", daysWorked)}</tr></table>
+<p style="margin:0 0 4px;color:#5b6478;font-size:12px">Thursday to Wednesday. "Day" is a full day; hours are clocked time net of breaks.</p>
 ${sectionTitle("Hours per person")}${summaryTable}
 ${sectionTitle("Notes", noted.length ? `${noted.length} this week` : "")}${notesTable}
 ${sectionTitle("Every entry", "for checking a day, if needed")}${detailTable}`
@@ -276,18 +298,21 @@ ${sectionTitle("Every entry", "for checking a day, if needed")}${detailTable}`
   const text = [
     title,
     "",
-    "HOURS PER PERSON",
-    ...people.map((name) => `${name}: ${fmtHours(week.days.reduce((s, d) => s + (cell[`${name}|${d}`] || 0), 0)) || 0} h`),
-    `Total: ${fmtHours(grand) || 0} h`,
+    "PER PERSON",
+    ...people.map((name) => `${name}: ${describe(personTotal[name]) || "0"}`),
+    `Total: ${describe(grand) || "0"}`,
     "",
     "NOTES",
     ...(noted.length ? noted.map((e) => `${shortDay(e.work_date)}  ${e.name}: ${e.notes.trim()}`) : ["No notes this week."]),
     "",
     "EVERY ENTRY",
-    ...entries.map((e) => `${shortDay(e.work_date)}  ${e.name}  ${hhmm(e.clock_in)}-${hhmm(e.clock_out)}  ${e.hours} h${e.project_name ? `  ${e.project_name}` : ""}`),
+    ...entries.map(
+      (e) =>
+        `${shortDay(e.work_date)}  ${e.name}  ${e.entry_type === "full_day" ? "Full day" : `${hhmm(e.clock_in)}-${hhmm(e.clock_out)}  ${e.hours} h`}${e.project_name ? `  ${e.project_name}` : ""}`
+    ),
   ].join("\n");
 
-  return { subject: title, html, text, people: people.length, entries: entries.length, hours: Math.round(grand * 100) / 100 };
+  return { subject: title, html, text, people: people.length, entries: entries.length, days: grand.days, hours: Math.round(grand.hours * 100) / 100 };
 }
 
 // What's missing so far this week: working days with nothing logged, and

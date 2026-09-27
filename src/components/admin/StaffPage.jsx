@@ -1117,7 +1117,7 @@ function AddHolidayInline({ employeeId, onSaved }) {
   );
 }
 
-// ---------- Hours (admin): clock in / out per person per day ----------
+// ---------- Hours (admin): days x people, full day or clock in / out ----------
 
 // 24-hour clock in 15-minute steps, "00:00" .. "23:45".
 const TIME_OPTIONS = Array.from({ length: 96 }, (_, i) => {
@@ -1130,6 +1130,7 @@ const HOURS_DEFAULTS_KEY = "staff-hours.defaults";
 // Stamped at build time (vite.config.js) so support can tell which build a
 // phone is actually running.
 const APP_BUILD = typeof __BUILD_STAMP__ === "string" ? __BUILD_STAMP__ : "dev";
+const DAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function toMinutes(t) {
   const [h, m] = String(t || "00:00").slice(0, 5).split(":").map(Number);
@@ -1147,6 +1148,10 @@ export function entryHours(row) {
 
 function hhmm(t) {
   return String(t || "").slice(0, 5);
+}
+
+function isFullDay(row) {
+  return row.entry_type === "full_day";
 }
 
 function hoursPeriod(period) {
@@ -1171,29 +1176,61 @@ function rememberedHourDefaults() {
       clock_out: TIME_OPTIONS.includes(saved.clock_out) ? saved.clock_out : "17:00",
       break_minutes: BREAK_OPTIONS.includes(Number(saved.break_minutes)) ? Number(saved.break_minutes) : 30,
       project_name: PROJECT_OPTIONS.includes(saved.project_name) ? saved.project_name : "",
+      entry_type: saved.entry_type === "hours" ? "hours" : "full_day",
     };
   } catch {
-    return { clock_in: "08:00", clock_out: "17:00", break_minutes: 30, project_name: "" };
+    return { clock_in: "08:00", clock_out: "17:00", break_minutes: 30, project_name: "", entry_type: "full_day" };
   }
+}
+
+// The last 14 days as pickable chips, oldest first, so a week can be logged
+// in one go. Anything older comes in through the "another date" picker.
+function recentDays(count = 14) {
+  const out = [];
+  const today = new Date();
+  for (let i = count - 1; i >= 0; i -= 1) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    out.push(dateKey(d));
+  }
+  return out;
+}
+
+function dayChipLabel(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return `${DAY_SHORT[new Date(y, m - 1, d).getDay()]} ${d}`;
+}
+
+// "3 days" / "3 days + 4h" / "4h" for a set of entries.
+function describeTotal(rows) {
+  const days = rows.filter(isFullDay).length;
+  const hours = rows.filter((r) => !isFullDay(r)).reduce((s, r) => s + entryHours(r), 0);
+  const parts = [];
+  if (days) parts.push(`${days} ${days === 1 ? "day" : "days"}`);
+  if (hours) parts.push(`${Math.round(hours * 100) / 100}h`);
+  return parts.join(" + ") || "0";
 }
 
 function HoursSection({ employees }) {
   const [rows, setRows] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [period, setPeriod] = useState("week");
-  const [form, setForm] = useState(() => ({ work_date: dateKey(new Date()), employee_ids: [], notes: "", ...rememberedHourDefaults() }));
+  const [form, setForm] = useState(() => ({ days: [dateKey(new Date())], employee_ids: [], notes: "", ...rememberedHourDefaults() }));
+  const [otherDate, setOtherDate] = useState("");
+  const [errors, setErrors] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [banner, setBanner] = useState(null);
+  const [busyId, setBusyId] = useState(null);
   const [emailWeek, setEmailWeek] = useState("this");
   const [emailing, setEmailing] = useState(false);
   const [previewHtml, setPreviewHtml] = useState(null);
   const [setupReport, setSetupReport] = useState(null);
   // Status shown inside the email card so it can't be missed while scrolled down.
   const [emailStatus, setEmailStatus] = useState(null);
-  const [errors, setErrors] = useState({});
-  const [saving, setSaving] = useState(false);
-  const [banner, setBanner] = useState(null);
-  const [busyId, setBusyId] = useState(null);
 
   const employeeById = useMemo(() => Object.fromEntries(employees.map((e) => [e.id, e])), [employees]);
+  const dayChips = useMemo(() => recentDays(14), []);
+  const extraDays = form.days.filter((d) => !dayChips.includes(d));
 
   useEffect(() => {
     load();
@@ -1224,7 +1261,17 @@ function HoursSection({ employees }) {
     if (errors[key]) setErrors((e) => ({ ...e, [key]: false }));
   }
 
-  const preview = entryHours(form);
+  function toggleDay(iso) {
+    setForm((f) => ({ ...f, days: f.days.includes(iso) ? f.days.filter((d) => d !== iso) : [...f.days, iso].sort() }));
+    if (errors.days) setErrors((e) => ({ ...e, days: false }));
+  }
+
+  function addOtherDate() {
+    if (!otherDate) return;
+    if (!form.days.includes(otherDate)) setForm((f) => ({ ...f, days: [...f.days, otherDate].sort() }));
+    setOtherDate("");
+    if (errors.days) setErrors((e) => ({ ...e, days: false }));
+  }
 
   function togglePerson(id) {
     setForm((f) => ({
@@ -1239,42 +1286,56 @@ function HoursSection({ employees }) {
     if (errors.employee_ids) setErrors((e) => ({ ...e, employee_ids: false }));
   }
 
-  // One row per person picked, all with the same times — the usual case is
-  // the whole crew on the same hours.
+  const preview = entryHours(form);
+  const entryCount = form.days.length * form.employee_ids.length;
+
+  // One row per day per person picked. Full days keep the standard times so
+  // hours still add up on the sheet; the entry_type is what the wage list
+  // and the register go by.
   async function handleAdd() {
     const e = {};
-    if (!form.work_date) e.work_date = true;
+    if (form.days.length === 0) e.days = true;
     if (form.employee_ids.length === 0) e.employee_ids = true;
-    if (form.clock_in === form.clock_out) e.clock_out = true;
+    if (form.entry_type === "hours" && form.clock_in === form.clock_out) e.clock_out = true;
     setErrors(e);
     if (Object.keys(e).length) return;
     setSaving(true);
     try {
       const { data: userData } = await supabase.auth.getUser();
-      const rowsToInsert = form.employee_ids.map((employee_id) => ({
-        employee_id,
-        work_date: form.work_date,
-        clock_in: form.clock_in,
-        clock_out: form.clock_out,
-        break_minutes: Number(form.break_minutes) || 0,
-        project_name: form.project_name || null,
-        notes: form.notes.trim() || null,
-        created_by: userData?.user?.id || null,
-      }));
+      const rowsToInsert = form.days.flatMap((work_date) =>
+        form.employee_ids.map((employee_id) => ({
+          employee_id,
+          work_date,
+          entry_type: form.entry_type,
+          clock_in: form.clock_in,
+          clock_out: form.clock_out,
+          break_minutes: Number(form.break_minutes) || 0,
+          project_name: form.project_name || null,
+          notes: form.notes.trim() || null,
+          created_by: userData?.user?.id || null,
+        }))
+      );
       const { error } = await supabase.from("staff_hours").insert(rowsToInsert);
       if (error) throw error;
       try {
         window.localStorage.setItem(
           HOURS_DEFAULTS_KEY,
-          JSON.stringify({ clock_in: form.clock_in, clock_out: form.clock_out, break_minutes: form.break_minutes, project_name: form.project_name })
+          JSON.stringify({
+            clock_in: form.clock_in,
+            clock_out: form.clock_out,
+            break_minutes: form.break_minutes,
+            project_name: form.project_name,
+            entry_type: form.entry_type,
+          })
         );
       } catch {
         // Storage blocked: defaults just won't persist.
       }
-      const count = form.employee_ids.length;
-      const who = count === 1 ? employeeById[form.employee_ids[0]]?.full_name || "1 person" : `${count} people`;
-      flash("success", `${preview}h saved for ${who}.`);
-      // Keep date and times; clear the names and note for the next batch.
+      const people = form.employee_ids.length;
+      const days = form.days.length;
+      const what = form.entry_type === "full_day" ? `${days} full ${days === 1 ? "day" : "days"}` : `${days} ${days === 1 ? "day" : "days"} of ${preview}h`;
+      flash("success", `Saved ${what} for ${people} ${people === 1 ? "person" : "people"}.`);
+      // Keep the days, times and project; clear the names and note for the next batch.
       setForm((f) => ({ ...f, employee_ids: [], notes: "" }));
       load();
       syncExcelExport().catch((err) => console.error("Excel export sync failed:", err));
@@ -1298,12 +1359,11 @@ function HoursSection({ employees }) {
     const { data: sessionData } = await supabase.auth.getSession();
     const token = sessionData?.session?.access_token;
     if (!token) throw new Error("Not signed in.");
-    const res = await fetch(path, {
+    return fetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload),
     });
-    return res;
   }
 
   async function handleEmailWeek() {
@@ -1313,7 +1373,7 @@ function HoursSection({ employees }) {
       const res = await callHoursApi("/api/hours-weekly", { week: emailAnchor() });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || `Email failed (${res.status}).`);
-      setEmailStatus({ kind: "ok", text: `Sent to ${json.to}: ${json.people} ${json.people === 1 ? "person" : "people"}, ${json.hours}h.` });
+      setEmailStatus({ kind: "ok", text: `Sent to ${json.to}: ${json.people} ${json.people === 1 ? "person" : "people"}, ${json.entries} entries.` });
     } catch (err) {
       console.error(err);
       setEmailStatus({ kind: "error", text: err.message || "Couldn't send the email." });
@@ -1387,13 +1447,10 @@ function HoursSection({ employees }) {
   const totals = useMemo(() => {
     const byEmp = {};
     visible.forEach((r) => {
-      const t = byEmp[r.employee_id] || { hours: 0, days: new Set() };
-      t.hours += entryHours(r);
-      t.days.add(r.work_date);
-      byEmp[r.employee_id] = t;
+      (byEmp[r.employee_id] = byEmp[r.employee_id] || []).push(r);
     });
     return Object.entries(byEmp)
-      .map(([id, t]) => ({ id, name: employeeById[id]?.full_name || "Unknown", hours: Math.round(t.hours * 100) / 100, days: t.days.size }))
+      .map(([id, list]) => ({ id, name: employeeById[id]?.full_name || "Unknown", total: describeTotal(list), days: new Set(list.map((r) => r.work_date)).size }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [visible, employeeById]);
 
@@ -1415,6 +1472,8 @@ function HoursSection({ employees }) {
     );
   }
 
+  const fullDay = form.entry_type === "full_day";
+
   return (
     <div>
       {banner && (
@@ -1427,15 +1486,52 @@ function HoursSection({ employees }) {
       <div className="card cert-form">
         <div className="cert-form-head">
           <Clock size={18} color="var(--accent)" />
-          <span>Add hours</span>
-          <span style={{ marginLeft: "auto", fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: "var(--accent-2)" }}>{preview}h</span>
+          <span>Log days</span>
+          <span style={{ marginLeft: "auto", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12.5, color: "var(--accent-2)" }}>
+            {fullDay ? `full day · ${preview}h` : `${preview}h`}
+          </span>
         </div>
+
         <div className="field">
-          <label className="label">
-            Date <span className="req">*</span>
-          </label>
-          <input className={`input ${errors.work_date ? "error" : ""}`} type="date" value={form.work_date} onChange={(e) => setField("work_date", e.target.value)} />
+          <div className="label" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span>
+              Days <span className="req">*</span>
+              {form.days.length > 0 && <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> · {form.days.length} picked</span>}
+            </span>
+            <button type="button" className="btn-link" style={{ marginLeft: "auto", marginBottom: 0, padding: 0 }} onClick={() => setForm((f) => ({ ...f, days: [] }))}>
+              Clear
+            </button>
+          </div>
+          <div className={`day-grid ${errors.days ? "error" : ""}`}>
+            {dayChips.map((iso) => {
+              const on = form.days.includes(iso);
+              const [y, m, d] = iso.split("-").map(Number);
+              const weekend = [0, 6].includes(new Date(y, m - 1, d).getDay());
+              return (
+                <button key={iso} type="button" className={`day-btn ${on ? "active" : ""} ${weekend ? "weekend" : ""}`} onClick={() => toggleDay(iso)}>
+                  {dayChipLabel(iso)}
+                </button>
+              );
+            })}
+          </div>
+          {extraDays.length > 0 && (
+            <div className="pad-chips" style={{ marginTop: 6 }}>
+              {extraDays.map((iso) => (
+                <button key={iso} type="button" className="pad-chip" onClick={() => toggleDay(iso)} title="Remove">
+                  {shortDate(iso)} <X size={11} />
+                </button>
+              ))}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+            <input className="input" type="date" value={otherDate} onChange={(e) => setOtherDate(e.target.value)} style={{ flex: 1 }} />
+            <button type="button" className="btn-small" onClick={addOtherDate} disabled={!otherDate}>
+              <Plus size={13} /> Another date
+            </button>
+          </div>
+          {errors.days && <div className="hint error">Pick at least one day</div>}
         </div>
+
         <div className="field">
           <div className="label" style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span>
@@ -1462,63 +1558,56 @@ function HoursSection({ employees }) {
           </div>
           {errors.employee_ids && <div className="hint error">Pick at least one person</div>}
         </div>
-        <div className="hours-times">
-          <div className="field">
-            <label className="label">Clock in</label>
-            <select className="input" value={form.clock_in} onChange={(e) => setField("clock_in", e.target.value)}>
-              {TIME_OPTIONS.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label className="label">Clock out</label>
-            <select className={`input ${errors.clock_out ? "error" : ""}`} value={form.clock_out} onChange={(e) => setField("clock_out", e.target.value)}>
-              {TIME_OPTIONS.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-            {errors.clock_out && <div className="hint error">Same as clock in</div>}
-          </div>
-          <div className="field">
-            <label className="label">Break</label>
-            <select className="input" value={form.break_minutes} onChange={(e) => setField("break_minutes", Number(e.target.value))}>
-              {BREAK_OPTIONS.map((b) => (
-                <option key={b} value={b}>
-                  {b} min
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
+
         <div className="field">
-          <label className="label">Project</label>
-          <select className="input" value={form.project_name} onChange={(e) => setField("project_name", e.target.value)}>
-            <option value="">Not set</option>
-            {PROJECT_OPTIONS.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
+          <div className="label">What</div>
+          <div className="subtabs" style={{ marginBottom: 8 }}>
+            <button type="button" className={`subtab ${fullDay ? "active" : ""}`} onClick={() => setField("entry_type", "full_day")}>
+              <Sun size={15} />
+              <span>Full day</span>
+            </button>
+            <button type="button" className={`subtab ${!fullDay ? "active" : ""}`} onClick={() => setField("entry_type", "hours")}>
+              <Clock size={15} />
+              <span>Hours</span>
+            </button>
+          </div>
+          {fullDay ? (
+            <details className="more-details" style={{ margin: 0 }}>
+              <summary>
+                Standard day {hhmm(form.clock_in)}–{hhmm(form.clock_out)}, {form.break_minutes} min break
+              </summary>
+              <HoursTimeFields form={form} errors={errors} setField={setField} />
+            </details>
+          ) : (
+            <HoursTimeFields form={form} errors={errors} setField={setField} />
+          )}
         </div>
-        <div className="field">
-          <label className="label">Notes for the day</label>
-          <textarea
-            className="input"
-            rows={2}
-            placeholder="e.g. Left early for delivery, rained off at 2"
-            value={form.notes}
-            onChange={(e) => setField("notes", e.target.value)}
-          />
+
+        <div className="two-col">
+          <div className="field">
+            <label className="label">Project</label>
+            <select className="input" value={form.project_name} onChange={(e) => setField("project_name", e.target.value)}>
+              <option value="">Not set</option>
+              {PROJECT_OPTIONS.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label className="label">Note</label>
+            <input className="input" type="text" placeholder="Optional" value={form.notes} onChange={(e) => setField("notes", e.target.value)} />
+          </div>
         </div>
+
         <button className="btn-primary" onClick={handleAdd} disabled={saving}>
           {saving ? <Loader2 size={17} className="spin" /> : <Plus size={17} />}
-          {saving ? "Saving..." : "Add hours"}
+          {saving
+            ? "Saving..."
+            : entryCount > 0
+            ? `Save ${form.employee_ids.length} ${form.employee_ids.length === 1 ? "person" : "people"} × ${form.days.length} ${form.days.length === 1 ? "day" : "days"}`
+            : "Save"}
         </button>
       </div>
 
@@ -1567,10 +1656,13 @@ function HoursSection({ employees }) {
             <div className={setupReport.smtp === "ok" ? "ok" : setupReport.smtp === "not tried" ? "" : "bad"}>
               {setupReport.smtp === "ok" ? "✓" : setupReport.smtp === "not tried" ? "·" : "✗"} Gmail login: {setupReport.smtp}
             </div>
-            <div className={setupReport.database === "ok" ? "ok" : setupReport.database === "not tried" ? "" : "bad"}>
-              {setupReport.database === "ok" ? "✓" : setupReport.database === "not tried" ? "·" : "✗"} Hours data: {setupReport.database}
+            <div className={setupReport.database?.startsWith("ok") ? "ok" : setupReport.database === "not tried" ? "" : "bad"}>
+              {setupReport.database?.startsWith("ok") ? "✓" : setupReport.database === "not tried" ? "·" : "✗"} Hours data: {setupReport.database}
             </div>
-            <div>Sends to {setupReport.to}{setupReport.cc ? `, copy ${setupReport.cc}` : ""}</div>
+            <div>
+              Sends to {setupReport.to}
+              {setupReport.cc ? `, copy ${setupReport.cc}` : ""}
+            </div>
           </div>
         )}
       </div>
@@ -1619,14 +1711,8 @@ function HoursSection({ employees }) {
         <div className="card" style={{ marginBottom: 12 }}>
           {totals.map((t) => (
             <div key={t.id} className="breakdown-row">
-              <span>
-                {t.name}
-                <span style={{ color: "var(--text-muted)", fontSize: 12 }}>
-                  {" "}
-                  · {t.days} {t.days === 1 ? "day" : "days"}
-                </span>
-              </span>
-              <span className="delivery-row-qty">{t.hours}h</span>
+              <span>{t.name}</span>
+              <span className="delivery-row-qty">{t.total}</span>
             </div>
           ))}
         </div>
@@ -1649,14 +1735,13 @@ function HoursSection({ employees }) {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="cert-row-title">{employeeById[r.employee_id]?.full_name || "Unknown"}</div>
                     <div className="cert-row-sub">
-                      {hhmm(r.clock_in)}–{hhmm(r.clock_out)}
-                      {r.break_minutes ? ` · ${r.break_minutes} min break` : ""}
+                      {isFullDay(r) ? "Full day" : `${hhmm(r.clock_in)}–${hhmm(r.clock_out)}${r.break_minutes ? ` · ${r.break_minutes} min break` : ""}`}
                       {r.project_name ? ` · ${r.project_name}` : ""}
                     </div>
                     {r.notes && <div className="cert-row-sub" style={{ fontStyle: "italic" }}>{r.notes}</div>}
                   </div>
                   <span className="delivery-row-qty" style={{ fontSize: 13.5 }}>
-                    {entryHours(r)}h
+                    {isFullDay(r) ? "Day" : `${entryHours(r)}h`}
                   </span>
                 </div>
                 <button type="button" className="icon-btn" title="Delete" onClick={() => handleDelete(r)} disabled={busyId === r.id}>
@@ -1667,6 +1752,44 @@ function HoursSection({ employees }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function HoursTimeFields({ form, errors, setField }) {
+  return (
+    <div className="hours-times" style={{ marginTop: 6 }}>
+      <div className="field">
+        <label className="label">Clock in</label>
+        <select className="input" value={form.clock_in} onChange={(e) => setField("clock_in", e.target.value)}>
+          {TIME_OPTIONS.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="field">
+        <label className="label">Clock out</label>
+        <select className={`input ${errors.clock_out ? "error" : ""}`} value={form.clock_out} onChange={(e) => setField("clock_out", e.target.value)}>
+          {TIME_OPTIONS.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+        {errors.clock_out && <div className="hint error">Same as clock in</div>}
+      </div>
+      <div className="field">
+        <label className="label">Break</label>
+        <select className="input" value={form.break_minutes} onChange={(e) => setField("break_minutes", Number(e.target.value))}>
+          {BREAK_OPTIONS.map((b) => (
+            <option key={b} value={b}>
+              {b} min
+            </option>
+          ))}
+        </select>
+      </div>
     </div>
   );
 }

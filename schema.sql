@@ -879,3 +879,14 @@ insert into public.employees (full_name)
 select v.full_name
 from (values ('Stephen Doyle'), ('Niall Watson'), ('Steve Shea')) as v(full_name)
 where not exists (select 1 from public.employees e where lower(e.full_name) = lower(v.full_name));
+
+-- ============================================================
+-- Staff hours: full-day entries
+-- ============================================================
+-- Most of the crew are paid by the day. An entry is either a "full_day" (the
+-- standard start/finish times are stored so hours still add up) or "hours"
+-- (actual clock in / out). Re-runnable.
+
+alter table public.staff_hours add column if not exists entry_type text not null default 'hours';
+alter table public.staff_hours drop constraint if exists staff_hours_entry_type_check;
+alter table public.staff_hours add constraint staff_hours_entry_type_check check (entry_type in ('hours', 'full_day'));
