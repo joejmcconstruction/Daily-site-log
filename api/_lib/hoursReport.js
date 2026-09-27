@@ -40,14 +40,34 @@ export async function authorise(req) {
   if (!cronSecret && /vercel-cron/i.test(req.headers["user-agent"] || "")) return { ok: true, via: "cron" };
   if (!token) return { ok: false, status: 401, error: "Not signed in." };
 
-  const anon = createClient(requireEnv("VITE_SUPABASE_URL"), requireEnv("VITE_SUPABASE_ANON_KEY"), {
+  // The admin check runs as the caller (their token, normal row security):
+  // admins can read their own admin_users row, crew get nothing. This way it
+  // doesn't depend on the service key being right.
+  const asUser = createClient(requireEnv("VITE_SUPABASE_URL"), requireEnv("VITE_SUPABASE_ANON_KEY"), {
     auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${token}` } },
   });
-  const { data, error } = await anon.auth.getUser(token);
+  const { data, error } = await asUser.auth.getUser(token);
   if (error || !data?.user) return { ok: false, status: 401, error: "Not signed in." };
-  const { data: adminRow } = await adminClient().from("admin_users").select("user_id").eq("user_id", data.user.id).maybeSingle();
+  const { data: adminRow, error: adminError } = await asUser.from("admin_users").select("user_id").eq("user_id", data.user.id).maybeSingle();
+  if (adminError) return { ok: false, status: 500, error: `Admin check failed: ${adminError.message}` };
   if (!adminRow) return { ok: false, status: 403, error: "Admins only." };
   return { ok: true, via: "admin", user: data.user };
+}
+
+// Which kind of Supabase key is in SUPABASE_SERVICE_ROLE_KEY, read from the
+// key itself (it's a JWT with a "role" claim): "service_role" is right,
+// "anon" means the wrong key was copied.
+export function serviceKeyRole() {
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!key) return "missing";
+  try {
+    const payload = key.split(".")[1];
+    const json = JSON.parse(Buffer.from(payload.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"));
+    return json.role || "unknown";
+  } catch {
+    return key.startsWith("sb_secret_") ? "service_role" : "unknown";
+  }
 }
 
 // ---------- dates (all as YYYY-MM-DD strings, Irish calendar days) ----------

@@ -13,6 +13,7 @@ import {
   isValidIso,
   sendMail,
   verifySmtp,
+  serviceKeyRole,
   readBody,
   REPORT_TO,
   REPORT_CC,
@@ -33,6 +34,7 @@ export default async function handler(req, res) {
     // to the mail server. Reports true/false only, never the values.
     if (String(body.check || req.query?.check || "") === "1" && auth.via === "admin") {
       const env = Object.fromEntries(["SUPABASE_SERVICE_ROLE_KEY", "SMTP_USER", "SMTP_PASS", "CRON_SECRET"].map((k) => [k, !!process.env[k]]));
+      const keyRole = serviceKeyRole();
       let smtp = "not tried";
       if (env.SMTP_USER && env.SMTP_PASS) {
         try {
@@ -45,13 +47,13 @@ export default async function handler(req, res) {
       let database = "not tried";
       if (env.SUPABASE_SERVICE_ROLE_KEY) {
         try {
-          await loadWeek(weekRange(todayInDublin()));
-          database = "ok";
+          const data = await loadWeek(weekRange(todayInDublin()));
+          database = keyRole === "service_role" ? `ok (${data.employees.length} staff on file)` : "readable, but the key can't see everyone's hours";
         } catch (e) {
           database = `failed: ${e.message}`;
         }
       }
-      return res.status(200).json({ env, smtp, database, to: REPORT_TO, cc: REPORT_CC });
+      return res.status(200).json({ env, keyRole, smtp, database, to: REPORT_TO, cc: REPORT_CC });
     }
 
     const anchor = body.week || req.query?.week;

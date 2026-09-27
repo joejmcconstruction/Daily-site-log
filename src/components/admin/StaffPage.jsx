@@ -1549,11 +1549,21 @@ function HoursSection({ employees }) {
         )}
         {setupReport && (
           <div className="setup-report">
-            {Object.entries(setupReport.env || {}).map(([k, ok]) => (
-              <div key={k} className={ok ? "ok" : "bad"}>
-                {ok ? "✓" : "✗"} {k} {ok ? "set" : "missing in Vercel"}
-              </div>
-            ))}
+            {Object.entries(setupReport.env || {}).map(([k, ok]) => {
+              if (k === "SUPABASE_SERVICE_ROLE_KEY" && ok) {
+                const right = setupReport.keyRole === "service_role";
+                return (
+                  <div key={k} className={right ? "ok" : "bad"}>
+                    {right ? "✓" : "✗"} {k} {right ? "set (service_role)" : `is the ${setupReport.keyRole} key, needs the service_role key`}
+                  </div>
+                );
+              }
+              return (
+                <div key={k} className={ok ? "ok" : "bad"}>
+                  {ok ? "✓" : "✗"} {k} {ok ? "set" : "missing in Vercel"}
+                </div>
+              );
+            })}
             <div className={setupReport.smtp === "ok" ? "ok" : setupReport.smtp === "not tried" ? "" : "bad"}>
               {setupReport.smtp === "ok" ? "✓" : setupReport.smtp === "not tried" ? "·" : "✗"} Gmail login: {setupReport.smtp}
             </div>
