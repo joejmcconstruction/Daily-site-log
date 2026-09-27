@@ -9,7 +9,7 @@ import { createClient } from "@supabase/supabase-js";
 import nodemailer from "nodemailer";
 
 export const REPORT_TO = process.env.HOURS_REPORT_TO || "kate@jmcconstruction.com";
-export const REPORT_CC = process.env.HOURS_REPORT_CC ?? "joemccormack.jmc@gmail.com";
+export const REPORT_CC = process.env.HOURS_REPORT_CC ?? "joemccormack.jmc@gmail.com, joe@jmcconstruction.com";
 export const REMINDER_TO = process.env.HOURS_REMINDER_TO || "joemccormack.jmc@gmail.com";
 export const APP_URL = process.env.APP_URL || "https://daily-site-log.vercel.app";
 
@@ -149,12 +149,33 @@ function hhmm(t) {
   return String(t || "").slice(0, 5);
 }
 
-const CELL = "padding:6px 8px;border:1px solid #d9dee8;font-size:13px;";
-const HEAD = `${CELL}background:#16264d;color:#fff;font-weight:700;text-align:left;`;
-const NUM = `${CELL}text-align:right;font-variant-numeric:tabular-nums;`;
+// Email styling is all inline (mail clients strip stylesheets). Navy header
+// rows, zebra striping, right-aligned numbers, weekend columns tinted.
+const FONT = "font-family:Arial,Helvetica,sans-serif;";
+const TD = "padding:8px 10px;border-bottom:1px solid #e2e6ee;font-size:13px;color:#131f3d;vertical-align:top;";
+const TH = `padding:9px 10px;background:#16264d;color:#ffffff;font-size:12px;font-weight:700;text-align:left;letter-spacing:0.02em;`;
+const NUM = `${TD}text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;`;
+const WEEKEND_BG = "#f3f5f9";
+
+function isWeekend(iso) {
+  const d = dayOfWeek(iso);
+  return d === 0 || d === 6;
+}
+
+function dayHeader(iso) {
+  const [, , d] = iso.split("-").map(Number);
+  return `${DAY_NAMES[dayOfWeek(iso)]}<br><span style="font-weight:400;opacity:0.85">${d}</span>`;
+}
+
+function sectionTitle(text, sub) {
+  return `<h3 style="${FONT}font-size:15px;margin:26px 0 8px;color:#131f3d">${esc(text)}${
+    sub ? ` <span style="font-weight:400;color:#5b6478;font-size:12.5px">${esc(sub)}</span>` : ""
+  }</h3>`;
+}
 
 export function buildWeeklyEmail(week, { employees, entries }) {
-  const title = `Staff hours · ${shortDay(week.start)} – ${longDay(week.end)}`;
+  const range = `${shortDay(week.start)} – ${longDay(week.end)}`;
+  const title = `Staff hours · ${range}`;
   const people = Array.from(new Set(entries.map((e) => e.name))).sort((a, b) => a.localeCompare(b));
 
   // Summary: person x day.
@@ -165,64 +186,85 @@ export function buildWeeklyEmail(week, { employees, entries }) {
   });
   const dayTotals = week.days.map((d) => entries.filter((e) => e.work_date === d).reduce((s, e) => s + e.hours, 0));
   const grand = dayTotals.reduce((s, v) => s + v, 0);
+  const daysWorked = week.days.filter((d, i) => dayTotals[i] > 0).length;
 
   const summaryRows = people
     .map((name, i) => {
-      const cells = week.days.map((d) => `<td style="${NUM}">${fmtHours(cell[`${name}|${d}`])}</td>`).join("");
+      const cells = week.days
+        .map((d) => `<td style="${NUM}${isWeekend(d) ? `background:${WEEKEND_BG};` : ""}">${fmtHours(cell[`${name}|${d}`]) || `<span style="color:#c5cad6">–</span>`}</td>`)
+        .join("");
       const total = week.days.reduce((s, d) => s + (cell[`${name}|${d}`] || 0), 0);
-      const bg = i % 2 ? "#f5f7fb" : "#ffffff";
-      return `<tr style="background:${bg}"><td style="${CELL}font-weight:600">${esc(name)}</td>${cells}<td style="${NUM}font-weight:700">${fmtHours(total)}</td></tr>`;
+      const bg = i % 2 ? "#fafbfd" : "#ffffff";
+      return `<tr style="background:${bg}"><td style="${TD}font-weight:700;white-space:nowrap">${esc(name)}</td>${cells}<td style="${NUM}font-weight:700;background:#eef1f7">${fmtHours(total)}</td></tr>`;
     })
     .join("");
-  const totalsRow = `<tr style="background:#eef1f7"><td style="${CELL}font-weight:700">Total</td>${dayTotals
-    .map((v) => `<td style="${NUM}font-weight:700">${fmtHours(v)}</td>`)
-    .join("")}<td style="${NUM}font-weight:700">${fmtHours(grand)}</td></tr>`;
+  const totalsRow = `<tr style="background:#e6eaf3"><td style="${TD}font-weight:700;border-bottom:none">Total</td>${dayTotals
+    .map((v) => `<td style="${NUM}font-weight:700;border-bottom:none">${fmtHours(v) || "–"}</td>`)
+    .join("")}<td style="${NUM}font-weight:700;border-bottom:none;background:#16264d;color:#fff">${fmtHours(grand)}</td></tr>`;
 
-  const summaryTable = `<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;max-width:720px">
-<tr><th style="${HEAD}">Name</th>${week.days.map((d) => `<th style="${HEAD}text-align:right">${esc(shortDay(d).slice(0, 6))}</th>`).join("")}<th style="${HEAD}text-align:right">Total</th></tr>
+  const summaryTable = `<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;border:1px solid #d9dee8;border-radius:8px;overflow:hidden">
+<tr><th style="${TH}">Name</th>${week.days.map((d) => `<th style="${TH}text-align:right">${dayHeader(d)}</th>`).join("")}<th style="${TH}text-align:right">Total</th></tr>
 ${summaryRows}${totalsRow}</table>`;
 
-  // Detail: every entry.
+  // Notes: one row each, in a table with an amber accent so they can't be missed.
+  const noted = entries
+    .filter((e) => e.notes && e.notes.trim())
+    .sort((a, b) => (a.work_date === b.work_date ? a.name.localeCompare(b.name) : a.work_date < b.work_date ? -1 : 1));
+  const notesTable = noted.length
+    ? `<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;border:1px solid #e8d9b0;border-left:5px solid #b8862c;background:#fffaf0">
+<tr><th style="${TH}background:#b8862c">Day</th><th style="${TH}background:#b8862c">Name</th><th style="${TH}background:#b8862c">Note</th></tr>
+${noted
+  .map(
+    (e, i) =>
+      `<tr style="background:${i % 2 ? "#fff6e3" : "#fffaf0"}"><td style="${TD}white-space:nowrap;border-color:#f0e4c8">${esc(shortDay(e.work_date))}</td><td style="${TD}font-weight:700;white-space:nowrap;border-color:#f0e4c8">${esc(e.name)}</td><td style="${TD}border-color:#f0e4c8">${esc(e.notes.trim())}</td></tr>`
+  )
+  .join("")}</table>`
+    : `<p style="${FONT}font-size:13px;color:#5b6478;margin:0">No notes this week.</p>`;
+
+  // Detail: every entry, at the bottom, for anyone who needs to check a day.
   const detailRows = entries
     .slice()
     .sort((a, b) => (a.work_date === b.work_date ? a.name.localeCompare(b.name) : a.work_date < b.work_date ? -1 : 1))
     .map(
       (e, i) =>
-        `<tr style="background:${i % 2 ? "#f5f7fb" : "#ffffff"}"><td style="${CELL}">${esc(shortDay(e.work_date))}</td><td style="${CELL}">${esc(e.name)}</td><td style="${CELL}">${hhmm(e.clock_in)}–${hhmm(e.clock_out)}</td><td style="${NUM}">${e.break_minutes || 0}</td><td style="${NUM}">${fmtHours(e.hours)}</td><td style="${CELL}">${esc(e.project_name || "")}</td><td style="${CELL}">${esc(e.notes || "")}</td></tr>`
+        `<tr style="background:${i % 2 ? "#fafbfd" : "#ffffff"}"><td style="${TD}font-size:12px;white-space:nowrap">${esc(shortDay(e.work_date))}</td><td style="${TD}font-size:12px;white-space:nowrap">${esc(e.name)}</td><td style="${TD}font-size:12px;white-space:nowrap">${hhmm(e.clock_in)} – ${hhmm(e.clock_out)}</td><td style="${NUM}font-size:12px">${e.break_minutes || 0}</td><td style="${NUM}font-size:12px;font-weight:700">${fmtHours(e.hours)}</td><td style="${TD}font-size:12px">${esc(e.project_name || "")}</td></tr>`
     )
     .join("");
-  const detailTable = `<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;max-width:720px">
-<tr><th style="${HEAD}">Day</th><th style="${HEAD}">Name</th><th style="${HEAD}">In–out</th><th style="${HEAD}text-align:right">Break</th><th style="${HEAD}text-align:right">Hours</th><th style="${HEAD}">Project</th><th style="${HEAD}">Notes</th></tr>${detailRows}</table>`;
+  const detailTable = `<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;border:1px solid #e2e6ee">
+<tr><th style="${TH}background:#5b6478">Day</th><th style="${TH}background:#5b6478">Name</th><th style="${TH}background:#5b6478">In – out</th><th style="${TH}background:#5b6478;text-align:right">Break (min)</th><th style="${TH}background:#5b6478;text-align:right">Hours</th><th style="${TH}background:#5b6478">Project</th></tr>${detailRows}</table>`;
 
-  // Notes by day.
-  const noted = entries.filter((e) => e.notes && e.notes.trim());
-  const notesByDay = week.days
-    .map((d) => {
-      const list = noted.filter((e) => e.work_date === d);
-      if (!list.length) return "";
-      return `<p style="margin:8px 0 2px;font-weight:700">${esc(shortDay(d))}</p><ul style="margin:0 0 6px 18px;padding:0">${list
-        .map((e) => `<li style="font-size:13px;margin:2px 0"><b>${esc(e.name)}:</b> ${esc(e.notes.trim())}</li>`)
-        .join("")}</ul>`;
-    })
-    .join("");
+  const stat = (label, value) =>
+    `<td style="padding:0 18px 0 0"><div style="${FONT}font-size:22px;font-weight:800;color:#131f3d">${value}</div><div style="${FONT}font-size:11px;color:#5b6478;text-transform:uppercase;letter-spacing:0.05em">${label}</div></td>`;
 
   const empty = entries.length === 0;
-  const html = `<div style="font-family:Arial,Helvetica,sans-serif;color:#131f3d;max-width:760px">
-<h2 style="margin:0 0 4px;font-size:18px">${esc(title)}</h2>
-<p style="margin:0 0 14px;color:#5b6478;font-size:13px">${people.length} ${people.length === 1 ? "person" : "people"} · ${entries.length} ${entries.length === 1 ? "entry" : "entries"} · ${fmtHours(grand) || 0} hours in total. Hours are net of breaks.</p>
-${empty ? `<p style="font-size:14px"><b>No hours were logged this week.</b></p>` : `<h3 style="font-size:14px;margin:16px 0 6px">Hours per person</h3>${summaryTable}
-<h3 style="font-size:14px;margin:20px 0 6px">Every entry</h3>${detailTable}
-${notesByDay ? `<h3 style="font-size:14px;margin:20px 0 4px">Notes</h3>${notesByDay}` : ""}`}
-<p style="margin:20px 0 0;color:#5b6478;font-size:12px">Sent automatically from the JMC site app · <a href="${esc(APP_URL)}" style="color:#16264d">${esc(APP_URL)}</a></p>
-</div>`;
+  const html = `<div style="background:#eef1f7;padding:20px 12px;${FONT}">
+<div style="max-width:760px;margin:0 auto;background:#ffffff;border-radius:12px;padding:22px 24px 26px;border:1px solid #d9dee8">
+<div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#b8862c;margin-bottom:4px">JMC Construction · Staff hours</div>
+<h2 style="margin:0 0 14px;font-size:20px;color:#131f3d">${esc(range)}</h2>
+${
+  empty
+    ? `<p style="font-size:14px;margin:0"><b>No hours were logged this week.</b></p>`
+    : `<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin-bottom:6px"><tr>${stat("Total hours", fmtHours(grand) || "0")}${stat(people.length === 1 ? "Person" : "People", people.length)}${stat(daysWorked === 1 ? "Day worked" : "Days worked", daysWorked)}</tr></table>
+<p style="margin:0 0 4px;color:#5b6478;font-size:12px">Hours are net of breaks. Thursday to Wednesday.</p>
+${sectionTitle("Hours per person")}${summaryTable}
+${sectionTitle("Notes", noted.length ? `${noted.length} this week` : "")}${notesTable}
+${sectionTitle("Every entry", "for checking a day, if needed")}${detailTable}`
+}
+<p style="margin:22px 0 0;color:#8b93a5;font-size:11.5px">Sent automatically from the JMC site app every Wednesday at 8pm · <a href="${esc(APP_URL)}" style="color:#16264d">${esc(APP_URL)}</a></p>
+</div></div>`;
 
   const text = [
     title,
     "",
+    "HOURS PER PERSON",
     ...people.map((name) => `${name}: ${fmtHours(week.days.reduce((s, d) => s + (cell[`${name}|${d}`] || 0), 0)) || 0} h`),
     `Total: ${fmtHours(grand) || 0} h`,
     "",
-    ...entries.map((e) => `${shortDay(e.work_date)}  ${e.name}  ${hhmm(e.clock_in)}-${hhmm(e.clock_out)}  ${e.hours} h${e.project_name ? `  ${e.project_name}` : ""}${e.notes ? `  (${e.notes})` : ""}`),
+    "NOTES",
+    ...(noted.length ? noted.map((e) => `${shortDay(e.work_date)}  ${e.name}: ${e.notes.trim()}`) : ["No notes this week."]),
+    "",
+    "EVERY ENTRY",
+    ...entries.map((e) => `${shortDay(e.work_date)}  ${e.name}  ${hhmm(e.clock_in)}-${hhmm(e.clock_out)}  ${e.hours} h${e.project_name ? `  ${e.project_name}` : ""}`),
   ].join("\n");
 
   return { subject: title, html, text, people: people.length, entries: entries.length, hours: Math.round(grand * 100) / 100 };
