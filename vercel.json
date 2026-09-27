@@ -2,6 +2,12 @@
   "functions": {
     "api/read-docket.js": {
       "maxDuration": 60
+    },
+    "api/hours-weekly.js": {
+      "maxDuration": 60
+    },
+    "api/hours-reminder.js": {
+      "maxDuration": 60
     }
   },
   "crons": [

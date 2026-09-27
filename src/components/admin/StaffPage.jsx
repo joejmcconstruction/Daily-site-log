@@ -1127,6 +1127,9 @@ const TIME_OPTIONS = Array.from({ length: 96 }, (_, i) => {
 });
 const BREAK_OPTIONS = [0, 15, 30, 45, 60];
 const HOURS_DEFAULTS_KEY = "staff-hours.defaults";
+// Stamped at build time (vite.config.js) so support can tell which build a
+// phone is actually running.
+const APP_BUILD = typeof __BUILD_STAMP__ === "string" ? __BUILD_STAMP__ : "dev";
 
 function toMinutes(t) {
   const [h, m] = String(t || "00:00").slice(0, 5).split(":").map(Number);
@@ -1183,6 +1186,8 @@ function HoursSection({ employees }) {
   const [emailing, setEmailing] = useState(false);
   const [previewHtml, setPreviewHtml] = useState(null);
   const [setupReport, setSetupReport] = useState(null);
+  // Status shown inside the email card so it can't be missed while scrolled down.
+  const [emailStatus, setEmailStatus] = useState(null);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState(null);
@@ -1303,20 +1308,23 @@ function HoursSection({ employees }) {
 
   async function handleEmailWeek() {
     setEmailing(true);
+    setEmailStatus({ kind: "info", text: "Sending..." });
     try {
       const res = await callHoursApi("/api/hours-weekly", { week: emailAnchor() });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || `Email failed (${res.status}).`);
-      flash("success", `Sent to ${json.to}: ${json.people} ${json.people === 1 ? "person" : "people"}, ${json.hours}h.`);
+      setEmailStatus({ kind: "ok", text: `Sent to ${json.to}: ${json.people} ${json.people === 1 ? "person" : "people"}, ${json.hours}h.` });
     } catch (err) {
       console.error(err);
-      flash("error", err.message || "Couldn't send the email.");
+      setEmailStatus({ kind: "error", text: err.message || "Couldn't send the email." });
     } finally {
       setEmailing(false);
     }
   }
 
   async function handlePreviewWeek() {
+    setEmailing(true);
+    setEmailStatus({ kind: "info", text: "Building preview..." });
     try {
       const res = await callHoursApi("/api/hours-weekly", { week: emailAnchor(), preview: "1" });
       if (!res.ok) {
@@ -1326,22 +1334,30 @@ function HoursSection({ employees }) {
       // Shown inside the app: a new tab opened after a fetch gets blocked as
       // a popup on phones.
       setPreviewHtml(await res.text());
+      setEmailStatus(null);
     } catch (err) {
       console.error(err);
-      flash("error", err.message || "Couldn't build the preview.");
+      setEmailStatus({ kind: "error", text: err.message || "Couldn't build the preview." });
+    } finally {
+      setEmailing(false);
     }
   }
 
   async function handleCheckSetup() {
     setSetupReport(null);
+    setEmailing(true);
+    setEmailStatus({ kind: "info", text: "Checking... this can take up to 20 seconds." });
     try {
       const res = await callHoursApi("/api/hours-weekly", { check: "1" });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || `Check failed (${res.status}).`);
       setSetupReport(json);
+      setEmailStatus(null);
     } catch (err) {
       console.error(err);
-      flash("error", err.message || "Couldn't run the check.");
+      setEmailStatus({ kind: "error", text: err.message || "Couldn't run the check." });
+    } finally {
+      setEmailing(false);
     }
   }
 
@@ -1519,11 +1535,18 @@ function HoursSection({ employees }) {
           {emailing ? <Loader2 size={14} className="spin" /> : <Mail size={14} />} Email to Kate
         </button>
         <div style={{ width: "100%", fontSize: 11.5, color: "var(--text-muted)" }}>
-          Goes automatically every Wednesday at 8pm. A reminder comes to you at 3pm if days or people are missing.{" "}
-          <button type="button" className="btn-link" style={{ margin: 0, padding: 0, fontSize: 11.5 }} onClick={handleCheckSetup}>
-            Check setup
-          </button>
+          Goes automatically every Wednesday at 8pm. A reminder comes to you at 3pm if days or people are missing.
         </div>
+        <button type="button" className="btn-small" onClick={handleCheckSetup} disabled={emailing}>
+          Check setup
+        </button>
+        <span style={{ fontSize: 10.5, color: "var(--text-muted)", marginLeft: "auto" }}>App version {APP_BUILD}</span>
+        {emailStatus && (
+          <div className={`setup-report ${emailStatus.kind === "error" ? "bad" : emailStatus.kind === "ok" ? "ok" : ""}`}>
+            {emailStatus.kind === "info" && <Loader2 size={12} className="spin" style={{ verticalAlign: -2, marginRight: 6 }} />}
+            {emailStatus.text}
+          </div>
+        )}
         {setupReport && (
           <div className="setup-report">
             {Object.entries(setupReport.env || {}).map(([k, ok]) => (
