@@ -10,7 +10,7 @@ import nodemailer from "nodemailer";
 
 export const REPORT_TO = process.env.HOURS_REPORT_TO || "kate@jmcconstruction.com";
 export const REPORT_CC = process.env.HOURS_REPORT_CC ?? "joemccormack.jmc@gmail.com, joe@jmcconstruction.com";
-export const REMINDER_TO = process.env.HOURS_REMINDER_TO || "joemccormack.jmc@gmail.com";
+export const REMINDER_TO = process.env.HOURS_REMINDER_TO || "joe@jmcconstruction.com, joemccormack.jmc@gmail.com";
 export const APP_URL = process.env.APP_URL || "https://daily-site-log.vercel.app";
 
 const TZ = "Europe/Dublin";
