@@ -934,3 +934,14 @@ from (values
 where not exists (select 1 from public.plant p where lower(p.name) = lower(v.name));
 
 alter table public.employees add column if not exists archived_at timestamptz;
+
+-- Fuel tank sizes for the original plant (the figures exportExcel.js already
+-- costed with; see the notes there on which are estimates). Only fills blanks.
+update public.plant p
+set fuel_tank_litres = v.litres
+from (values
+  ('13T Hitachi', 220), ('Kubota', 115), ('Hitachi 225', 270), ('Kobelco 140', 271),
+  ('Wacker Neuson Excavator', 35), ('Yanmar 0.8T', 10), ('Bobcat 1T', 16), ('Hyundai Duck', 150),
+  ('10T Thwaites Dumper', 72), ('6T Thwaites Dumper', 70), ('Wacker Plate', 5)
+) as v(name, litres)
+where lower(p.name) = lower(v.name) and p.fuel_tank_litres is null;
