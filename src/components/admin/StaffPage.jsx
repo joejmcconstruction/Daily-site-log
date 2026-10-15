@@ -91,6 +91,9 @@ export default function StaffPage() {
   });
 
   const loading = employees === null || trainings === null || holidays === null;
+  // Removed staff are kept (archived_at set) so their hours and holidays keep a
+  // name, but they drop out of every list you pick people from.
+  const activeEmployees = (employees || []).filter((e) => !e.archived_at);
 
   return (
     <div>
@@ -123,12 +126,12 @@ export default function StaffPage() {
       )}
 
       {!loading && !error && section === "staff" && (
-        <StaffRecordsSection employees={employees} trainings={trainings} onSaved={() => setRefreshKey((k) => k + 1)} />
+        <StaffRecordsSection employees={activeEmployees} trainings={trainings} onSaved={() => setRefreshKey((k) => k + 1)} />
       )}
       {!loading && !error && section === "holidays" && (
-        <HolidaysSection employees={employees} holidays={holidays} employeeById={employeeById} onSaved={() => setRefreshKey((k) => k + 1)} />
+        <HolidaysSection employees={activeEmployees} holidays={holidays} employeeById={employeeById} onSaved={() => setRefreshKey((k) => k + 1)} />
       )}
-      {!loading && !error && section === "hours" && <HoursSection employees={employees} />}
+      {!loading && !error && section === "hours" && <HoursSection employees={activeEmployees} allEmployees={employees} />}
     </div>
   );
 }
@@ -339,6 +342,7 @@ function EmployeeCard({ employee, certs, open, onToggle, onSaved, onFlash }) {
               {employee.start_date ? ` · started ${shortDate(employee.start_date)}` : ""}
             </div>
             {employee.notes && <div className="record-row-sub">{employee.notes}</div>}
+            <RemoveEmployeeButton employee={employee} onSaved={onSaved} onFlash={onFlash} />
           </details>
         </div>
       )}
@@ -601,6 +605,38 @@ function CertForm({ employeeId, typeKey, row, onCancel, onSaved }) {
         )}
       </div>
     </div>
+  );
+}
+
+// Removing stamps archived_at rather than deleting the row: a delete would
+// cascade away their logged hours, holidays and certs, and the wage list
+// needs those. A removed name can be added again as a new employee.
+function RemoveEmployeeButton({ employee, onSaved, onFlash }) {
+  const [busy, setBusy] = useState(false);
+
+  async function handleRemove() {
+    if (!window.confirm(`Remove ${employee.full_name} from staff? Their logged hours and holidays are kept for the records.`)) return;
+    setBusy(true);
+    const { error: dbError } = await supabase.from("employees").update({ archived_at: new Date().toISOString() }).eq("id", employee.id);
+    setBusy(false);
+    if (dbError) {
+      console.error(dbError);
+      onFlash(
+        "error",
+        /archived_at/.test(dbError.message || "")
+          ? "Run the latest block of schema.sql in Supabase first, then try again."
+          : dbError.message || "Couldn't remove this employee."
+      );
+      return;
+    }
+    onFlash("success", `${employee.full_name} removed.`);
+    onSaved();
+  }
+
+  return (
+    <button type="button" className="link-btn danger" style={{ marginTop: 8 }} onClick={handleRemove} disabled={busy}>
+      <Trash2 size={12} /> {busy ? "Removing..." : "Remove this employee"}
+    </button>
   );
 }
 
@@ -1211,7 +1247,7 @@ function describeTotal(rows) {
   return parts.join(" + ") || "0";
 }
 
-function HoursSection({ employees }) {
+function HoursSection({ employees, allEmployees }) {
   const [rows, setRows] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [period, setPeriod] = useState("week");
@@ -1228,7 +1264,8 @@ function HoursSection({ employees }) {
   // Status shown inside the email card so it can't be missed while scrolled down.
   const [emailStatus, setEmailStatus] = useState(null);
 
-  const employeeById = useMemo(() => Object.fromEntries(employees.map((e) => [e.id, e])), [employees]);
+  // Removed staff still name their old entries.
+  const employeeById = useMemo(() => Object.fromEntries(allEmployees.map((e) => [e.id, e])), [allEmployees]);
   const dayChips = useMemo(() => recentDays(14), []);
   const extraDays = form.days.filter((d) => !dayChips.includes(d));
 

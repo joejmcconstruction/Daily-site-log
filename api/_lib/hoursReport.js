@@ -124,7 +124,7 @@ export function entryHours(row) {
 export async function loadWeek(week) {
   const db = adminClient();
   const [empRes, hoursRes] = await Promise.all([
-    db.from("employees").select("id, full_name").order("full_name"),
+    db.from("employees").select("*").order("full_name"),
     db.from("staff_hours").select("*").gte("work_date", week.start).lte("work_date", week.end).order("work_date").order("clock_in"),
   ]);
   if (empRes.error) throw empRes.error;
@@ -322,7 +322,8 @@ export function findGaps(week, { employees, entries }, upTo) {
   const daysToCheck = week.days.filter((d) => d <= upTo && dayOfWeek(d) >= 1 && dayOfWeek(d) <= 5);
   const missingDays = daysToCheck.filter((d) => !entries.some((e) => e.work_date === d));
   const withHours = new Set(entries.map((e) => e.employee_id));
-  const missingPeople = employees.filter((e) => !withHours.has(e.id)).map((e) => e.full_name);
+  // Removed staff (archived_at set) aren't expected to have hours.
+  const missingPeople = employees.filter((e) => !e.archived_at && !withHours.has(e.id)).map((e) => e.full_name);
   return { missingDays, missingPeople, daysChecked: daysToCheck };
 }
 

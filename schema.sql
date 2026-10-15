@@ -890,3 +890,47 @@ where not exists (select 1 from public.employees e where lower(e.full_name) = lo
 alter table public.staff_hours add column if not exists entry_type text not null default 'hours';
 alter table public.staff_hours drop constraint if exists staff_hours_entry_type_check;
 alter table public.staff_hours add constraint staff_hours_entry_type_check check (entry_type in ('hours', 'full_day'));
+
+-- ============================================================
+-- Plant list + removing staff, both managed from the app
+-- ============================================================
+-- Plant used to be a fixed list in helpers.js (MACHINE_OPTIONS); it now lives
+-- here so it can be added to on the Certs page. Everyone signed in can read it
+-- (the foreman's report form needs the dropdown); only admins can change it.
+-- "Removing" plant or an employee only stamps archived_at, so old reports,
+-- certs and wage history keep their names. Re-runnable.
+
+create table if not exists public.plant (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id),
+  name text not null,
+  fuel_tank_litres numeric, -- used for fuel costing; blank = the figure in exportExcel.js, if any
+  archived_at timestamptz
+);
+
+create unique index if not exists plant_name_unique on public.plant (lower(name));
+
+alter table public.plant enable row level security;
+
+drop policy if exists "signed-in users can view plant" on public.plant;
+create policy "signed-in users can view plant"
+on public.plant for select to authenticated using (true);
+
+drop policy if exists "admins can insert plant" on public.plant;
+create policy "admins can insert plant"
+on public.plant for insert to authenticated with check (public.is_admin());
+
+drop policy if exists "admins can update plant" on public.plant;
+create policy "admins can update plant"
+on public.plant for update to authenticated using (public.is_admin()) with check (public.is_admin());
+
+insert into public.plant (name)
+select v.name
+from (values
+  ('13T Hitachi'), ('Kubota'), ('Hitachi 225'), ('Kobelco 140'), ('Wacker Neuson Excavator'), ('Yanmar 0.8T'),
+  ('Bobcat 1T'), ('Hyundai Duck'), ('10T Thwaites Dumper'), ('6T Thwaites Dumper'), ('Wacker Plate')
+) as v(name)
+where not exists (select 1 from public.plant p where lower(p.name) = lower(v.name));
+
+alter table public.employees add column if not exists archived_at timestamptz;

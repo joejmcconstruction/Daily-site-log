@@ -4,6 +4,7 @@ import { PROJECT_OPTIONS, MACHINE_OPTIONS, QUANTITY_FIELDS, PAD_ACTIVITIES, PAD_
 import { renderPieChart, renderGroupedBarChart, renderStackedBarChart } from "./dashboardCharts";
 import { buildDeliveriesSheets } from "./deliveriesExcel";
 import { fetchDeliveries } from "./deliveries";
+import { fetchPlant } from "./plant";
 
 const EXPORT_BUCKET = "reports-export";
 const EXPORT_FILE = "site-daily-report.xlsx";
@@ -48,6 +49,26 @@ const KNOWN_TANK_CAPACITY_L = {
   "6T Thwaites Dumper": 70, // Thwaites 6T range spec sheet — confirm
   "Wacker Plate": 5, // ASSUMPTION/AVERAGE: diesel reversible plate compactors in this size range (e.g. DPU5545He) run ~5L — confirm which plate model this is
 };
+
+// The machines costed in the workbook: every row in the plant table (removed
+// ones too, since old hours still need costing), plus any machine name that
+// turns up in hours but isn't on the list, so no hours drop out of the costs.
+// A tank size entered when the plant was added wins over the figures above.
+function plantForCosting(plantRows, machineHours, dayworks) {
+  const rows = plantRows && plantRows.length ? plantRows : MACHINE_OPTIONS.map((name) => ({ name }));
+  const list = rows.map((p) => ({
+    name: p.name,
+    tank: p.fuel_tank_litres != null ? Number(p.fuel_tank_litres) : p.name in KNOWN_TANK_CAPACITY_L ? KNOWN_TANK_CAPACITY_L[p.name] : null,
+  }));
+  const seen = new Set(list.map((p) => p.name));
+  [...machineHours, ...dayworks].forEach((r) => {
+    if (r.machine_name && !seen.has(r.machine_name)) {
+      seen.add(r.machine_name);
+      list.push({ name: r.machine_name, tank: r.machine_name in KNOWN_TANK_CAPACITY_L ? KNOWN_TANK_CAPACITY_L[r.machine_name] : null });
+    }
+  });
+  return list;
+}
 
 // Quantity columns come straight from QUANTITY_FIELDS, in the order they appear
 // on the form, so a new quantity gets its export column without touching this.
@@ -240,21 +261,21 @@ function buildDayworksSheet(wb, dayworks, reportById) {
   return ws;
 }
 
-function buildRatesSheet(wb) {
+function buildRatesSheet(wb, plant) {
   const ws = wb.addWorksheet("Rates");
   ws.columns = [{ width: 26 }, { width: 16 }];
   ws.addRow(["Fuel price (€/litre)", FUEL_PRICE_PER_LITRE]);
   ws.addRow(["Labour rate (€/hour)", LABOUR_RATE_PER_HOUR]);
   ws.addRow([]);
   ws.addRow(["Machine", "Tank capacity (L)"]);
-  MACHINE_OPTIONS.forEach((m) => {
-    ws.addRow([m, m in KNOWN_TANK_CAPACITY_L ? KNOWN_TANK_CAPACITY_L[m] : null]);
+  plant.forEach(({ name, tank }) => {
+    ws.addRow([name, tank]);
   });
   ws.getRow(1).font = { bold: true };
   ws.getRow(2).font = { bold: true };
   ws.getRow(4).font = { bold: true };
   const tankTableStartRow = 5; // first machine row (row 4 is the "Machine"/"Tank capacity" header)
-  const tankTableEndRow = tankTableStartRow + MACHINE_OPTIONS.length - 1;
+  const tankTableEndRow = tankTableStartRow + plant.length - 1;
   return { ws, tankTableStartRow, tankTableEndRow };
 }
 
@@ -267,7 +288,7 @@ function buildRatesSheet(wb) {
 // per project. All the netting that keeps an hour from being charged twice —
 // driving time out of ground labour, daywork time out of contract — happens in
 // costingBuckets().
-function buildCostReportSheet(wb, reports, machineHours, dayworks, reportById, ratesRange) {
+function buildCostReportSheet(wb, reports, machineHours, dayworks, reportById, ratesRange, plant) {
   const buckets = costingBuckets(reports, machineHours, dayworks, reportById);
 
   const projectOrder = [...PROJECT_OPTIONS];
@@ -281,14 +302,14 @@ function buildCostReportSheet(wb, reports, machineHours, dayworks, reportById, r
 
   const costRows = [];
   projectOrder.forEach((project) => {
-    MACHINE_OPTIONS.forEach((machine) => {
+    plant.forEach(({ name: machine }) => {
       const hrs = buckets.contractMachineAgg[project + KEY_SEP + machine];
       if (hrs) costRows.push({ project, type: "Contract", item: machine, hours: Number(hrs.toFixed(2)) });
     });
     const labHrs = buckets.contractLabourAgg[project];
     if (labHrs) costRows.push({ project, type: "Contract", item: "Labour", hours: Number(labHrs.toFixed(2)) });
 
-    MACHINE_OPTIONS.forEach((machine) => {
+    plant.forEach(({ name: machine }) => {
       const hrs = buckets.dayworkMachineAgg[project + KEY_SEP + machine];
       if (hrs) costRows.push({ project, type: "Dayworks", item: machine, hours: Number(hrs.toFixed(2)) });
     });
@@ -367,7 +388,7 @@ function buildCostReportSheet(wb, reports, machineHours, dayworks, reportById, r
 // project — reused by the Dashboard sheet's KPI tiles and chart images.
 // Unlike buildCostReportSheet (which writes live formulas), this returns
 // plain numbers because a chart image has to be drawn from real values.
-function aggregateForDashboard(reports, machineHours, dayworks, reportById) {
+function aggregateForDashboard(reports, machineHours, dayworks, reportById, plant) {
   const projectOrder = [...PROJECT_OPTIONS];
   const seen = new Set(projectOrder);
   const byProject = {};
@@ -409,8 +430,8 @@ function aggregateForDashboard(reports, machineHours, dayworks, reportById) {
   projectOrder.forEach((p) => {
     const b = bucket(p);
     b.labourHoursGround = buckets.contractLabourAgg[p] || 0;
-    MACHINE_OPTIONS.forEach((machine) => {
-      const tank = machine in KNOWN_TANK_CAPACITY_L ? KNOWN_TANK_CAPACITY_L[machine] : 0;
+    plant.forEach(({ name: machine, tank: tankOrNull }) => {
+      const tank = tankOrNull || 0;
 
       const hrs = buckets.contractMachineAgg[p + KEY_SEP + machine] || 0;
       b.machineHours += hrs;
@@ -434,7 +455,7 @@ function aggregateForDashboard(reports, machineHours, dayworks, reportById) {
 // Dashboard sheet: KPI tiles + chart images, all computed fresh from the same
 // live data as the other sheets. See dashboardCharts.js for why these are
 // embedded pictures rather than native Excel chart objects.
-function buildDashboardSheet(wb, reports, machineHours, dayworks, reportById) {
+function buildDashboardSheet(wb, reports, machineHours, dayworks, reportById, plant) {
   const ws = wb.addWorksheet("Dashboard", { views: [{ showGridLines: false }] });
   ws.columns = [
     { width: 3 },
@@ -454,7 +475,7 @@ function buildDashboardSheet(wb, reports, machineHours, dayworks, reportById) {
   const chambersFittedTotal = reports.reduce((s, r) => s + (Number(r.chambers_fitted) || 0), 0);
   const machineHoursTotal = machineHours.reduce((s, m) => s + (Number(m.hours) || 0), 0);
 
-  const { projectOrder, perProject } = aggregateForDashboard(reports, machineHours, dayworks, reportById);
+  const { projectOrder, perProject } = aggregateForDashboard(reports, machineHours, dayworks, reportById, plant);
   const grandTotalCost = perProject.reduce((s, p) => s + p.totalCost, 0);
   const grandDayworksCost = perProject.reduce((s, p) => s + p.dayworksCost, 0);
 
@@ -681,12 +702,13 @@ export function buildWorkbook(data) {
     reportById[r.id] = r;
   });
 
-  buildDashboardSheet(wb, reports, machineHours, dayworks, reportById);
+  const plant = plantForCosting(data.plant, machineHours, dayworks);
+  buildDashboardSheet(wb, reports, machineHours, dayworks, reportById, plant);
   buildReportsSheet(wb, reports);
   buildMachineSheet(wb, machineHours, reportById);
   buildDayworksSheet(wb, dayworks, reportById);
-  const ratesResult = buildRatesSheet(wb);
-  buildCostReportSheet(wb, reports, machineHours, dayworks, reportById, ratesResult);
+  const ratesResult = buildRatesSheet(wb, plant);
+  buildCostReportSheet(wb, reports, machineHours, dayworks, reportById, ratesResult, plant);
   buildPadTrackerSheet(wb, padProgress, reportById);
   buildStaffHoursSheet(wb, data.staffHours || [], data.employees || []);
   buildDeliveriesSheets(wb, data.deliveries || []);
@@ -719,7 +741,7 @@ export async function syncExcelExport() {
 
   // fetchDeliveries() merges the admin-only delivery_costs rows in, which is
   // what puts prices on the Deliveries and Costs by Project sheets.
-  const [reportsRes, machineRes, dayworksRes, padsRes, hoursRes, employeesRes, deliveries] = await Promise.all([
+  const [reportsRes, machineRes, dayworksRes, padsRes, hoursRes, employeesRes, deliveries, plant] = await Promise.all([
     supabase.from("reports").select("*"),
     supabase.from("machine_hours").select("*"),
     supabase.from("dayworks").select("*"),
@@ -727,6 +749,7 @@ export async function syncExcelExport() {
     supabase.from("staff_hours").select("*"),
     supabase.from("employees").select("id, full_name"),
     fetchDeliveries(),
+    fetchPlant(),
   ]);
   if (reportsRes.error) throw reportsRes.error;
   if (machineRes.error) throw machineRes.error;
@@ -744,6 +767,7 @@ export async function syncExcelExport() {
     staffHours: hoursRes.data || [],
     employees: employeesRes.data || [],
     deliveries,
+    plant: plant.fromDb ? plant.rows : [],
   });
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: XLSX_MIME });

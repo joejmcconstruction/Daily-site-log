@@ -14,6 +14,7 @@ import {
   uid,
 } from "../lib/helpers";
 import { syncExcelExport } from "../lib/exportExcel";
+import { fetchActivePlantNames } from "../lib/plant";
 import FileUpload from "./FileUpload";
 
 const emptyForm = () => ({
@@ -53,7 +54,22 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [submitError, setSubmitError] = useState("");
+  const [machineOptions, setMachineOptions] = useState(MACHINE_OPTIONS);
   const topRef = useRef(null);
+
+  // Plant is added and removed on the Certs page, so read the current list.
+  useEffect(() => {
+    let cancelled = false;
+    fetchActivePlantNames().then((names) => {
+      if (!cancelled) setMachineOptions(names);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Keep a machine that's since been removed selectable when editing an old report.
+  const machineChoices = (current) => (current && !machineOptions.includes(current) ? [current, ...machineOptions] : machineOptions);
 
   useEffect(() => {
     if (!editReportId) return;
@@ -602,7 +618,7 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
                 onChange={(e) => setMachineField(m.id, "machine_name", e.target.value)}
               >
                 <option value="">Select machine...</option>
-                {MACHINE_OPTIONS.map((opt) => (
+                {machineChoices(m.machine_name).map((opt) => (
                   <option key={opt} value={opt}>
                     {opt}
                   </option>
@@ -695,7 +711,7 @@ export default function NewReportForm({ onSubmitted, editReportId = null, onSave
               <label className="label">Machine</label>
               <select className="input" value={d.machine_name} onChange={(e) => setDayworkField(d.id, "machine_name", e.target.value)}>
                 <option value="">None — hand work</option>
-                {MACHINE_OPTIONS.map((opt) => (
+                {machineChoices(d.machine_name).map((opt) => (
                   <option key={opt} value={opt}>
                     {opt}
                   </option>

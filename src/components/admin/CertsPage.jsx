@@ -19,7 +19,8 @@ import {
   Image as ImageIcon,
 } from "lucide-react";
 import { supabase } from "../../supabaseClient";
-import { MACHINE_OPTIONS, VEHICLE_MODEL_OPTIONS, uid, dateKey } from "../../lib/helpers";
+import { VEHICLE_MODEL_OPTIONS, uid, dateKey } from "../../lib/helpers";
+import { fetchPlant, activePlant } from "../../lib/plant";
 import {
   CERT_CATEGORY,
   VEHICLE_CERT_SLOTS,
@@ -59,18 +60,19 @@ function slotsFor(category, name) {
 }
 
 // One entry per machine / vehicle, with its chips and worst status. Machines
-// come from the app's fixed list so one with nothing on file still shows as
-// missing its GA1; vehicles come from whatever registrations have certs,
-// plus any added this session that haven't had a cert saved yet.
-function buildSubjects(certs, category, drafts) {
+// come from the plant list so one with nothing on file still shows as
+// missing its GA1 (removed plant is hidden, certs and all); vehicles come
+// from whatever registrations have certs, plus any added this session that
+// haven't had a cert saved yet.
+function buildSubjects(certs, category, drafts, plant) {
   const groups = groupCertsBySubject(certs, category);
   let list;
   if (category === "machine") {
-    const seen = new Set();
-    list = MACHINE_OPTIONS.map((name) => {
-      const key = name.toLowerCase();
+    const seen = new Set(plant.filter((p) => p.archived_at).map((p) => p.name.toLowerCase()));
+    list = activePlant(plant).map((p) => {
+      const key = p.name.toLowerCase();
       seen.add(key);
-      return groups.get(key) || { key, name, model: "", certs: [] };
+      return { ...(groups.get(key) || { key, name: p.name, model: "", certs: [] }), plantId: p.id };
     });
     groups.forEach((g, key) => {
       if (!seen.has(key)) list.push(g);
@@ -109,13 +111,19 @@ export default function CertsPage() {
   const [openKey, setOpenKey] = useState(null);
   const [draftVehicles, setDraftVehicles] = useState([]);
   const [showAddVehicle, setShowAddVehicle] = useState(false);
+  const [showAddPlant, setShowAddPlant] = useState(false);
+  const [plant, setPlant] = useState({ rows: [], fromDb: false });
 
   useEffect(() => {
     load();
   }, []);
 
   async function load() {
-    const { data, error: fetchError } = await supabase.from("compliance_certs").select("*").order("expiry_date", { ascending: true });
+    const [{ data, error: fetchError }, plantResult] = await Promise.all([
+      supabase.from("compliance_certs").select("*").order("expiry_date", { ascending: true }),
+      fetchPlant(),
+    ]);
+    setPlant(plantResult);
     if (fetchError) {
       setError(fetchError.message);
     } else {
@@ -128,20 +136,21 @@ export default function CertsPage() {
     window.setTimeout(() => setBanner(null), 3000);
   }
 
-  const subjects = useMemo(() => buildSubjects(certs || [], section, draftVehicles), [certs, section, draftVehicles]);
+  const subjects = useMemo(() => buildSubjects(certs || [], section, draftVehicles, plant.rows), [certs, section, draftVehicles, plant]);
   const attention = useMemo(() => attentionFor(subjects), [subjects]);
   const issueCounts = useMemo(
     () => ({
-      machine: attentionFor(buildSubjects(certs || [], "machine", [])).length,
-      vehicle: attentionFor(buildSubjects(certs || [], "vehicle", draftVehicles)).length,
+      machine: attentionFor(buildSubjects(certs || [], "machine", [], plant.rows)).length,
+      vehicle: attentionFor(buildSubjects(certs || [], "vehicle", draftVehicles, plant.rows)).length,
     }),
-    [certs, draftVehicles]
+    [certs, draftVehicles, plant]
   );
 
   function switchSection(next) {
     setSection(next);
     setOpenKey(null);
     setShowAddVehicle(false);
+    setShowAddPlant(false);
   }
 
   function addDraftVehicle({ name, model }) {
@@ -233,6 +242,24 @@ export default function CertsPage() {
               />
             ))}
           </div>
+
+          {section === "machine" &&
+            (showAddPlant ? (
+              <AddPlantForm
+                plant={plant}
+                onCancel={() => setShowAddPlant(false)}
+                onSaved={(name) => {
+                  setShowAddPlant(false);
+                  flash("success", `${name} added.`);
+                  setOpenKey(name.toLowerCase());
+                  load();
+                }}
+              />
+            ) : (
+              <button type="button" className="btn-secondary" onClick={() => setShowAddPlant(true)}>
+                <Plus size={15} /> Add plant
+              </button>
+            ))}
 
           {section === "vehicle" &&
             (showAddVehicle ? (
@@ -385,6 +412,12 @@ function SubjectCard({ category, subject, open, onToggle, onSaved, onRemoveDraft
                 })}
               </div>
             </>
+          )}
+
+          {category === "machine" && subject.plantId && (
+            <div style={{ marginTop: 12 }}>
+              <RemovePlantButton subject={subject} onSaved={onSaved} />
+            </div>
           )}
 
           {category === "vehicle" && (
@@ -747,6 +780,126 @@ function VehicleDetailsForm({ subject, onCancel, onSaved }) {
         {saving ? <Loader2 size={16} className="spin" /> : <Check size={16} />} {saving ? "Saving..." : "Save"}
       </button>
     </div>
+  );
+}
+
+function AddPlantForm({ plant, onCancel, onSaved }) {
+  const [name, setName] = useState("");
+  const [tank, setTank] = useState("");
+  const [errors, setErrors] = useState({});
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+
+  async function handleSubmit() {
+    setSubmitError("");
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setErrors({ name: true });
+      return;
+    }
+    const existing = plant.rows.find((p) => p.name.toLowerCase() === trimmed.toLowerCase());
+    if (existing && !existing.archived_at) {
+      setSubmitError(`${existing.name} is already on the list.`);
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const tankValue = tank === "" ? null : Number(tank);
+      const { data: userData } = await supabase.auth.getUser();
+      // Adding back a machine that was removed brings the old row (and its certs) back.
+      const { error: dbError } = existing?.id
+        ? await supabase.from("plant").update({ archived_at: null, fuel_tank_litres: tankValue ?? existing.fuel_tank_litres }).eq("id", existing.id)
+        : await supabase.from("plant").insert({ name: trimmed, fuel_tank_litres: tankValue, created_by: userData?.user?.id || null });
+      if (dbError) throw dbError;
+      onSaved(existing?.name || trimmed);
+    } catch (err) {
+      console.error(err);
+      setSubmitError(
+        plant.fromDb
+          ? err.message || "Something went wrong adding this machine."
+          : "The plant list isn't set up in the database yet — run the latest block of schema.sql in Supabase first."
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="card cert-form">
+      <div className="cert-form-head">
+        <Wrench size={18} color="var(--accent)" />
+        <span>Add plant</span>
+        <button type="button" className="icon-btn" style={{ marginLeft: "auto" }} onClick={onCancel} disabled={submitting} title="Cancel">
+          <X size={16} color="var(--text-muted)" />
+        </button>
+      </div>
+      {submitError && (
+        <div className="hint error" style={{ marginBottom: 8 }}>
+          <AlertCircle size={13} /> {submitError}
+        </div>
+      )}
+      <div className="two-col">
+        <div className="field">
+          <label className="label">
+            Machine name <span className="req">*</span>
+          </label>
+          <input
+            className={`input ${errors.name ? "error" : ""}`}
+            type="text"
+            placeholder="e.g. 8T Takeuchi"
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              if (errors.name) setErrors({});
+            }}
+          />
+          {errors.name && <div className="hint error">Required</div>}
+        </div>
+        <div className="field">
+          <label className="label">Fuel tank (litres)</label>
+          <input className="input" type="number" inputMode="decimal" min="0" step="any" placeholder="For fuel costing" value={tank} onChange={(e) => setTank(e.target.value)} />
+        </div>
+      </div>
+      <div className="record-row-sub" style={{ marginBottom: 10 }}>
+        It shows up straight away in the machine list on the daily report.
+      </div>
+      <button type="button" className="btn-primary" onClick={handleSubmit} disabled={submitting}>
+        {submitting ? <Loader2 size={16} className="spin" /> : <Plus size={16} />}
+        {submitting ? "Saving..." : "Add plant"}
+      </button>
+    </div>
+  );
+}
+
+function RemovePlantButton({ subject, onSaved }) {
+  const [busy, setBusy] = useState(false);
+  const [removeError, setRemoveError] = useState("");
+
+  async function handleRemove() {
+    if (!window.confirm(`Remove ${subject.name} from the plant list? Old reports keep their hours; it just won't be offered on new ones.`)) return;
+    setBusy(true);
+    setRemoveError("");
+    const { error: dbError } = await supabase.from("plant").update({ archived_at: new Date().toISOString() }).eq("id", subject.plantId);
+    setBusy(false);
+    if (dbError) {
+      console.error(dbError);
+      setRemoveError(dbError.message);
+      return;
+    }
+    onSaved(`${subject.name} removed.`);
+  }
+
+  return (
+    <>
+      <button type="button" className="link-btn danger" onClick={handleRemove} disabled={busy}>
+        <Trash2 size={12} /> {busy ? "Removing..." : "Remove this machine"}
+      </button>
+      {removeError && (
+        <div className="hint error">
+          <AlertCircle size={13} /> {removeError}
+        </div>
+      )}
+    </>
   );
 }
 
