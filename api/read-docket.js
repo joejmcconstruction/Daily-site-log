@@ -131,6 +131,7 @@ How to read them:
 - supplier / haulier: haulier only if a separate transport company is shown.
 - Read what is there. Leave a field empty (an empty string for text, null for numbers and for paid) only when it is genuinely absent from the document or truly illegible, and add a short warning saying which. Do not withhold a value just because you are not certain which label it belongs under — return your best reading and note the doubt in warnings. Legible handwriting counts as readable.
 - confidence is your overall confidence, 0 to 1, that these fields could go straight into the register without being checked against the paper. Handwritten quantities, faded thermal receipts and photos taken at an angle should lower it.
+- The file may have several pages (a PDF, or photographed pages joined into one file). They are all the same document: read every page and return one record covering all of them, with every product line from every page listed once. Take the document number and supplier from the first page and the totals from wherever they are printed, usually the last page.
 - If the file is not materials paperwork at all, set document_type to "other", leave the other fields null or empty, and say what it appears to be in notes.`;
 
 function bearerToken(req) {

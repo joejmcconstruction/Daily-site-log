@@ -18,6 +18,7 @@ import {
   List,
   Euro,
   Pencil,
+  Layers,
 } from "lucide-react";
 import { PROJECT_OPTIONS, dateKey, prettyDate } from "../lib/helpers";
 import { syncExcelExport } from "../lib/exportExcel";
@@ -31,7 +32,10 @@ import {
   COST_CATEGORY_OPTIONS,
   DOC_TYPE_LABEL,
   REVIEW_CONFIDENCE_THRESHOLD,
+  MAX_DOCKET_PAGES,
   prepareDocketFile,
+  combinePagesToPdf,
+  findSameDocument,
   readDocket,
   emptyDraft,
   emptyItem,
@@ -99,6 +103,10 @@ export default function DeliveriesPage({ isAdmin = false }) {
   const [savingAll, setSavingAll] = useState(false);
   const cameraRef = useRef(null);
   const galleryRef = useRef(null);
+  const multiRef = useRef(null);
+  const pageRef = useRef(null);
+  // Which card the next picked page belongs to (set by "Add another page").
+  const addPageTo = useRef(null);
 
   useEffect(() => {
     load();
@@ -181,6 +189,77 @@ export default function DeliveriesPage({ isAdmin = false }) {
         )
       );
     }
+  }
+
+  async function preparePages(photos) {
+    const pages = [];
+    for (const original of photos) {
+      try {
+        pages.push(await prepareDocketFile(original));
+      } catch (err) {
+        console.error(err);
+        pages.push(original);
+      }
+    }
+    return pages;
+  }
+
+  // Sets a card's pages and (re)reads it as one document. A single page is
+  // sent as the photo it is; two or more are joined into one PDF first, so the
+  // docket is read, stored and opened as one file.
+  async function readPages(draft, pages) {
+    patchDraft(draft.id, { status: "reading", error: "" });
+    try {
+      const baseName = (draft.fileName || "docket").replace(/ \(\d+ pages\)$/, "");
+      const joined = pages.length > 1;
+      const file = joined ? await combinePagesToPdf(pages, "docket-pages.pdf") : pages[0];
+      const fileName = joined ? `${baseName} (${pages.length} pages)` : baseName;
+      patchDraft(draft.id, { file, pages, fileName });
+      runRead({ ...draft, file });
+    } catch (err) {
+      console.error(err);
+      patchDraft(draft.id, { status: "review", error: `${err.message || "Couldn't join the pages."} The new pages were not added.` });
+    }
+  }
+
+  // Several photos picked as the pages of one docket: one card, one read.
+  async function handleMultiFiles(e) {
+    const picked = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!picked.length) return;
+    const photos = picked.filter((f) => f.type.startsWith("image/"));
+    if (photos.length < picked.length) {
+      flash("error", "Only photos can be joined into one docket. A PDF is already one document, so upload it on its own.");
+    } else if (photos.length > MAX_DOCKET_PAGES) {
+      flash("error", `A docket can have up to ${MAX_DOCKET_PAGES} pages. The extra ones were left out.`);
+    }
+    if (!photos.length) return;
+    const pages = await preparePages(photos.slice(0, MAX_DOCKET_PAGES));
+    const draft = { ...newDraft({ file: pages[0], fileName: photos[0].name }), status: "reading" };
+    setDrafts((prev) => [draft, ...prev]);
+    setView("add");
+    readPages(draft, pages);
+  }
+
+  function askForPage(id) {
+    addPageTo.current = id;
+    pageRef.current?.click();
+  }
+
+  async function handleAddPages(e) {
+    const picked = Array.from(e.target.files || []);
+    e.target.value = "";
+    const draft = drafts.find((d) => d.id === addPageTo.current);
+    addPageTo.current = null;
+    if (!draft || !picked.length) return;
+    const photos = picked.filter((f) => f.type.startsWith("image/"));
+    const room = MAX_DOCKET_PAGES - draft.pages.length;
+    if (!photos.length || room <= 0) return;
+    if (photos.length > room) {
+      flash("error", `A docket can have up to ${MAX_DOCKET_PAGES} pages. The extra ones were left out.`);
+    }
+    const added = await preparePages(photos.slice(0, room));
+    readPages(draft, [...draft.pages, ...added]);
   }
 
   function patchDraft(id, patch) {
@@ -268,6 +347,8 @@ export default function DeliveriesPage({ isAdmin = false }) {
       </datalist>
       <input ref={cameraRef} type="file" accept="image/*" capture="environment" multiple onChange={handleFiles} style={{ display: "none" }} />
       <input ref={galleryRef} type="file" accept="image/*,application/pdf,.pdf" multiple onChange={handleFiles} style={{ display: "none" }} />
+      <input ref={multiRef} type="file" accept="image/*" multiple onChange={handleMultiFiles} style={{ display: "none" }} />
+      <input ref={pageRef} type="file" accept="image/*" multiple onChange={handleAddPages} style={{ display: "none" }} />
 
       <div className="subtabs">
         <button type="button" className={`subtab ${view === "add" ? "active" : ""}`} onClick={() => setView("add")}>
@@ -305,7 +386,10 @@ export default function DeliveriesPage({ isAdmin = false }) {
           registerCount={registerCount}
           onCamera={() => cameraRef.current?.click()}
           onGallery={() => galleryRef.current?.click()}
+          onMulti={() => multiRef.current?.click()}
           onManual={() => setDrafts((prev) => [newDraft(), ...prev])}
+          deliveries={deliveries}
+          onAddPage={askForPage}
           onPatch={patchDraft}
           onSave={handleSave}
           onSaveAll={handleSaveAll}
@@ -345,7 +429,10 @@ function AddView({
   registerCount,
   onCamera,
   onGallery,
+  onMulti,
   onManual,
+  deliveries,
+  onAddPage,
   onPatch,
   onSave,
   onSaveAll,
@@ -377,6 +464,10 @@ function AddView({
         <button type="button" className="scan-btn" onClick={onGallery} disabled={!ready}>
           <ImageIcon size={22} color="var(--accent)" />
           <span>Upload / PDF</span>
+        </button>
+        <button type="button" className="scan-btn" onClick={onMulti} disabled={!ready} title="Several photos that are pages of one docket">
+          <Layers size={22} color="var(--accent)" />
+          <span>Multi-page</span>
         </button>
         <button type="button" className="scan-btn" onClick={onManual} disabled={!ready}>
           <Plus size={22} color="var(--accent)" />
@@ -416,6 +507,8 @@ function AddView({
               key={d.id}
               draft={d}
               isAdmin={isAdmin}
+              existing={d.status === "reading" ? null : findSameDocument(deliveries, d.header.supplier, d.header.docket_no)}
+              onAddPage={() => onAddPage(d.id)}
               onChange={(patch) => onPatch(d.id, patch)}
               onSave={() => onSave(d)}
               onRemove={() => onRemove(d.id)}
@@ -954,7 +1047,7 @@ function CostFields({ value, onChange }) {
 // One card per document waiting to be checked. Two faces: a one-glance
 // summary (what was read, one Save button) for the normal case, and the full
 // form behind "Fix details" for when something is wrong or missing.
-function DraftCard({ draft, isAdmin, onChange, onSave, onRemove }) {
+function DraftCard({ draft, isAdmin, existing, onAddPage, onChange, onSave, onRemove }) {
   const reading = draft.status === "reading";
   const saving = draft.status === "saving";
   const errors = draft.errors || {};
@@ -1016,6 +1109,26 @@ function DraftCard({ draft, isAdmin, onChange, onSave, onRemove }) {
           {draft.warnings.map((w, i) => (
             <div key={i}>• {w}</div>
           ))}
+        </div>
+      )}
+      {existing && (
+        <div className="hint error" style={{ marginBottom: 8 }}>
+          <AlertCircle size={13} style={{ flexShrink: 0 }} />
+          <span>
+            Already on the register: {existing.supplier || "this supplier"} {(DOC_TYPE_LABEL[existing.doc_type] || "Docket").toLowerCase()} #
+            {existing.docket_no}, saved {existing.logged ? prettyDate(String(existing.logged).slice(0, 10)) : "earlier"} with {existing.lines}{" "}
+            {existing.lines === 1 ? "line" : "lines"}. Saving it again will double it up.
+          </span>
+        </div>
+      )}
+      {!reading && draft.pages.length > 0 && (
+        <div className="docket-card-sub" style={{ marginBottom: 8 }}>
+          {draft.pages.length > 1 && <span>{draft.pages.length} pages, read as one docket</span>}
+          {draft.pages.length < MAX_DOCKET_PAGES && (
+            <button type="button" className="btn-link" style={{ margin: 0, padding: 0 }} onClick={onAddPage} disabled={saving}>
+              <Plus size={13} /> Add another page
+            </button>
+          )}
         </div>
       )}
 

@@ -740,7 +740,7 @@ export async function syncExcelExport() {
   if (!(await currentUserIsAdmin())) return;
 
   // fetchDeliveries() merges the admin-only delivery_costs rows in, which is
-  // what puts prices on the Deliveries and Costs by Project sheets.
+  // what puts prices on the Docket Register and Costs by Project sheets.
   const [reportsRes, machineRes, dayworksRes, padsRes, hoursRes, employeesRes, deliveries, plant] = await Promise.all([
     supabase.from("reports").select("*"),
     supabase.from("machine_hours").select("*"),

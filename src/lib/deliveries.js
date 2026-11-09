@@ -70,6 +70,144 @@ export async function prepareDocketFile(file) {
   return compressImage(file, 2000, 0.8);
 }
 
+// Most photographed pages that can be joined into one document. Beyond this
+// the joined file can't stay under the reader's size limit and still be legible.
+export const MAX_DOCKET_PAGES = 8;
+
+// Tried in order until the joined pages fit under MAX_DOCKET_READ_BYTES:
+// [longest edge in px, JPEG quality].
+const PAGE_ENCODINGS = [
+  [1800, 0.8],
+  [1600, 0.72],
+  [1400, 0.62],
+  [1200, 0.5],
+];
+
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Couldn't open one of the pages."));
+    };
+    img.src = url;
+  });
+}
+
+function pageToJpeg(img, maxEdge, quality) {
+  const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(img.width * scale));
+  canvas.height = Math.max(1, Math.round(img.height * scale));
+  const ctx = canvas.getContext("2d");
+  // JPEG has no transparency, so a see-through PNG page would come out black.
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error("Couldn't prepare one of the pages."));
+          return;
+        }
+        blob
+          .arrayBuffer()
+          .then((buffer) => resolve({ bytes: new Uint8Array(buffer), width: canvas.width, height: canvas.height }))
+          .catch(reject);
+      },
+      "image/jpeg",
+      quality
+    );
+  });
+}
+
+// A PDF whose pages are the given JPEGs, one per page. PDF stores JPEG data
+// as-is (the DCTDecode filter), so this needs no PDF library: three objects
+// per page (page, image, drawing instruction) plus the byte-offset table.
+function buildPdfFromJpegs(pages) {
+  const encoder = new TextEncoder();
+  const parts = [];
+  const offsets = [];
+  let length = 0;
+  const push = (chunk) => {
+    const bytes = typeof chunk === "string" ? encoder.encode(chunk) : chunk;
+    parts.push(bytes);
+    length += bytes.length;
+  };
+  const startObject = (n) => {
+    offsets[n] = length;
+    push(`${n} 0 obj\n`);
+  };
+  const pageObject = (i) => 3 + i * 3;
+
+  push("%PDF-1.4\n");
+  // Four high bytes in a comment mark the file as binary for anything sniffing it.
+  push(new Uint8Array([0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a]));
+
+  startObject(1);
+  push("<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+  startObject(2);
+  push(`<< /Type /Pages /Kids [${pages.map((_, i) => `${pageObject(i)} 0 R`).join(" ")}] /Count ${pages.length} >>\nendobj\n`);
+
+  pages.forEach((page, i) => {
+    const pageNo = pageObject(i);
+    const imageNo = pageNo + 1;
+    const contentNo = pageNo + 2;
+    // A4 width in points; height follows the photo's own shape.
+    const w = 595;
+    const h = Math.round(((w * page.height) / page.width) * 100) / 100;
+
+    startObject(pageNo);
+    push(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${w} ${h}] /Resources << /XObject << /Im0 ${imageNo} 0 R >> >> /Contents ${contentNo} 0 R >>\nendobj\n`
+    );
+
+    startObject(imageNo);
+    push(
+      `<< /Type /XObject /Subtype /Image /Width ${page.width} /Height ${page.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${page.bytes.length} >>\nstream\n`
+    );
+    push(page.bytes);
+    push("\nendstream\nendobj\n");
+
+    const content = `q ${w} 0 0 ${h} 0 0 cm /Im0 Do Q`;
+    startObject(contentNo);
+    push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream\nendobj\n`);
+  });
+
+  const objectCount = 3 + pages.length * 3; // object 0 plus catalog, page list and three per page
+  const xrefAt = length;
+  push(`xref\n0 ${objectCount}\n0000000000 65535 f \n`);
+  for (let n = 1; n < objectCount; n += 1) {
+    push(`${String(offsets[n]).padStart(10, "0")} 00000 n \n`);
+  }
+  push(`trailer\n<< /Size ${objectCount} /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`);
+  return new Blob(parts, { type: "application/pdf" });
+}
+
+// Joins photographed pages of one docket into a single PDF, so a multi-page
+// docket is read, stored and opened as one document. Pages are shrunk step by
+// step until the whole file fits what the reader accepts.
+export async function combinePagesToPdf(files, fileName = "docket.pdf") {
+  const images = [];
+  for (const file of files) images.push(await loadImage(file));
+  const budget = MAX_DOCKET_READ_BYTES - 16 * 1024;
+  for (const [maxEdge, quality] of PAGE_ENCODINGS) {
+    const pages = [];
+    for (const img of images) pages.push(await pageToJpeg(img, maxEdge, quality));
+    const total = pages.reduce((sum, p) => sum + p.bytes.length, 0);
+    if (total <= budget) {
+      return new File([buildPdfFromJpegs(pages)], fileName, { type: "application/pdf" });
+    }
+  }
+  throw new Error("These pages are too big to read as one document. Try fewer pages.");
+}
+
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -198,6 +336,9 @@ export function emptyDraft({ file = null, fileName = "" } = {}) {
   return {
     id: uid(),
     file,
+    // The photographed pages behind `file`. One photo is sent as it is; once a
+    // second page is added, `file` becomes a PDF joining them (combinePagesToPdf).
+    pages: isImage ? [file] : [],
     fileName: fileName || file?.name || "",
     previewUrl: file && isImage ? URL.createObjectURL(file) : null,
     isImage,
@@ -569,4 +710,50 @@ export function describeLine(d) {
   const what = [qty, d.product].filter(Boolean).join(" ");
   const where = d.location ? ` – ${d.location}` : "";
   return `${d.supplier || "Unknown supplier"} ${type.toLowerCase()}${ref}: ${what}${where}`;
+}
+
+// The reader copies supplier names as printed, so one supplier turns up as
+// "Keegan Quarries", "Keegan Quarries Ltd" and "Keegan Quarries Ltd (Ballycoolin
+// plant)". Dropping the bracketed part and the company suffix files them together.
+export function tidySupplier(name) {
+  return String(name || "")
+    .replace(/\s*\([^)]*\)/g, " ")
+    .replace(/ +,/g, ",")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[\s,]+(ltd|limited|teo|plc|dac|uc)\.?$/i, "")
+    .trim();
+}
+
+// Identifies a document by who issued it and its number, so the same paper
+// logged twice can be spotted. Empty when either part is missing: without
+// both there is nothing safe to match on.
+export function documentKey(supplier, docNo) {
+  const no = String(docNo || "").toUpperCase().replace(/\s+/g, "");
+  const who = tidySupplier(supplier)
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, "")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .join(" ");
+  return no && who ? `${who}|${no}` : "";
+}
+
+// The most recent scan already on the register with this supplier and document
+// number, or null. Used to warn before the same paper is saved a second time.
+export function findSameDocument(deliveries, supplier, docNo) {
+  const key = documentKey(supplier, docNo);
+  if (!key || !Array.isArray(deliveries)) return null;
+  const lines = deliveries.filter((d) => documentKey(d.supplier, d.docket_no) === key);
+  if (!lines.length) return null;
+  const latest = lines.reduce((a, b) => ((a.created_at || "") >= (b.created_at || "") ? a : b));
+  const sameScan = latest.docket_group ? lines.filter((d) => d.docket_group === latest.docket_group) : [latest];
+  return {
+    doc_type: latest.doc_type || "docket",
+    docket_no: latest.docket_no,
+    supplier: latest.supplier,
+    logged: latest.created_at,
+    lines: sameScan.length,
+  };
 }
