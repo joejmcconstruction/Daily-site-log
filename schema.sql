@@ -391,6 +391,9 @@ using (created_by = auth.uid() or public.is_admin());
 
 -- ============================================================
 -- Email alerts: certs/training expiring within 5 days
+-- SUPERSEDED (Nov 2026): the alert now goes out from api/cert-alerts.js over
+-- the same Gmail route as the hours emails. This Resend version was never
+-- switched on (no key was ever stored) and does not need to be run.
 -- ============================================================
 -- Runs entirely in Postgres (no Edge Function to deploy) — pg_cron fires a
 -- daily check, pg_net sends the HTTP request, Resend delivers the email.

@@ -6,11 +6,18 @@
     "api/hours-weekly.js": {
       "maxDuration": 60
     },
+    "api/cert-alerts.js": {
+      "maxDuration": 60
+    },
     "api/hours-reminder.js": {
       "maxDuration": 60
     }
   },
   "crons": [
+    {
+      "path": "/api/cert-alerts",
+      "schedule": "0 7 * * *"
+    },
     {
       "path": "/api/hours-reminder",
       "schedule": "0 14 * * 3"

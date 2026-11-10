@@ -17,6 +17,7 @@ import {
   Receipt,
   FileText,
   Image as ImageIcon,
+  Mail,
 } from "lucide-react";
 import { supabase } from "../../supabaseClient";
 import { VEHICLE_MODEL_OPTIONS, uid, dateKey } from "../../lib/helpers";
@@ -113,6 +114,7 @@ export default function CertsPage() {
   const [showAddVehicle, setShowAddVehicle] = useState(false);
   const [showAddPlant, setShowAddPlant] = useState(false);
   const [plant, setPlant] = useState({ rows: [], fromDb: false });
+  const [emailing, setEmailing] = useState(false);
 
   useEffect(() => {
     load();
@@ -134,6 +136,30 @@ export default function CertsPage() {
   function flash(type, text) {
     setBanner({ type, text });
     window.setTimeout(() => setBanner(null), 3000);
+  }
+
+  // Sends the expiry email now (the same one the morning check sends), so the
+  // email route can be tried without waiting for something to fall due.
+  async function emailExpiryList() {
+    setEmailing(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      if (!token) throw new Error("Not signed in.");
+      const res = await fetch("/api/cert-alerts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ force: "1" }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(json?.error || `Couldn't send the email (${res.status}).`);
+      flash("success", `Emailed to ${json.to}: ${json.due} due soon, ${json.expired} expired.`);
+    } catch (err) {
+      console.error(err);
+      flash("error", err.message || "Couldn't send the email.");
+    } finally {
+      setEmailing(false);
+    }
   }
 
   const subjects = useMemo(() => buildSubjects(certs || [], section, draftVehicles, plant.rows), [certs, section, draftVehicles, plant]);
@@ -169,6 +195,9 @@ export default function CertsPage() {
       <div className="eyebrow" style={{ marginTop: 0 }}>
         Certs &amp; Compliance
         <div className="eyebrow-sub">Tap a machine or vehicle to see its certs. Missing, expired and due-soon certs are flagged.</div>
+        <button type="button" className="btn-small" style={{ marginTop: 8 }} onClick={emailExpiryList} disabled={emailing}>
+          {emailing ? <Loader2 size={14} className="spin" /> : <Mail size={14} />} Email me the expiry list
+        </button>
       </div>
 
       <div className="pill-row">
